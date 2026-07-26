@@ -52,3 +52,30 @@ def test_json_roundtrip():
 
 def test_leaf_count_helper():
     assert WorldSpec(levels=[8, 6, 9]).max_leaf_count() == math.prod([8, 6, 9])
+
+
+def test_rejects_zero_level_count():
+    with pytest.raises(ValidationError, match="levels"):
+        WorldSpec(levels=[0, 3])
+
+
+def test_rejects_negative_border_roughness():
+    with pytest.raises(ValidationError, match="border_roughness"):
+        WorldSpec(border_roughness=-0.5)
+
+
+def test_rejects_nan_border_roughness():
+    with pytest.raises(ValidationError, match="border_roughness"):
+        WorldSpec(border_roughness=float("nan"))
+
+
+def test_rejects_unknown_field():
+    with pytest.raises(ValidationError):
+        WorldSpec(bogus_field=1)
+
+
+def test_border_roughness_per_level():
+    assert WorldSpec(levels=[4, 4]).border_roughness_per_level() == [0.4, 0.4]
+    assert WorldSpec(
+        levels=[4, 4], border_roughness=[0.1, 0.9]
+    ).border_roughness_per_level() == [0.1, 0.9]

@@ -3,7 +3,7 @@
 import math
 from typing import Optional, Union
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 GENERATOR_VERSION = "0.1.0"
 
@@ -14,6 +14,8 @@ MIN_ATOMS_PER_LEAF = 8
 
 
 class WorldSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     levels: list[int] = Field(default=[6, 5, 6], min_length=1, max_length=5)
     level_names: Optional[list[str]] = None
     n_landmasses: int = Field(default=3, ge=1, le=64)
@@ -38,7 +40,7 @@ class WorldSpec(BaseModel):
     @model_validator(mode="after")
     def _validate(self) -> "WorldSpec":
         if any(c < 1 for c in self.levels):
-            raise ValueError("every entry in levels must be >= 1")
+            raise ValueError(f"every entry in levels must be >= 1, got {self.levels}")
         if self.level_names is None:
             self.level_names = _DEFAULT_LEVEL_NAMES[: len(self.levels)]
         if len(self.level_names) != len(self.levels):
@@ -56,6 +58,13 @@ class WorldSpec(BaseModel):
             self.border_roughness
         ) != len(self.levels):
             raise ValueError("border_roughness list must match levels length")
+        values = (
+            self.border_roughness
+            if isinstance(self.border_roughness, list)
+            else [self.border_roughness]
+        )
+        if not all(0.0 <= v <= 2.0 for v in values):
+            raise ValueError("border_roughness values must be between 0.0 and 2.0")
         expected_land_atoms = self.resolution * self.land_fraction
         if self.max_leaf_count() * MIN_ATOMS_PER_LEAF > expected_land_atoms:
             need = int(self.max_leaf_count() * MIN_ATOMS_PER_LEAF / self.land_fraction)
