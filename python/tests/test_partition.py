@@ -132,3 +132,16 @@ def test_partition_balance():
         sizes = np.array([len(p) for p in parts])
         cv = sizes.std() / sizes.mean()
         assert cv < 0.3, f"seed {seed}: sizes {sizes.tolist()} cv {cv:.2f}"
+
+
+def test_redistribute_counts():
+    from mimesis_earth.partition import redistribute_counts
+
+    out = redistribute_counts(np.array([5, 5, 5]), np.array([3, 10, 10]))
+    assert out.sum() == 15
+    assert out[0] == 3
+    assert (out <= np.array([3, 10, 10])).all()
+    # no-op when everything fits
+    np.testing.assert_array_equal(
+        redistribute_counts(np.array([2, 2]), np.array([5, 5])), [2, 2]
+    )
