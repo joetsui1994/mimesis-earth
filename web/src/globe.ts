@@ -8,15 +8,33 @@ const LAND = '#e5decb'
 const GRID = '#cfc8b6'
 const HILITE = 'rgba(214, 185, 140, 0.65)'
 
+export function reverseWinding(fc: FeatureCollection): FeatureCollection {
+  const flip = (rings: number[][][]) => rings.map((r) => [...r].reverse())
+  return {
+    ...fc,
+    features: fc.features.map((f) => {
+      const g = f.geometry
+      if (!g || (g.type !== 'Polygon' && g.type !== 'MultiPolygon')) return f
+      const coordinates =
+        g.type === 'Polygon'
+          ? flip(g.coordinates as number[][][])
+          : (g.coordinates as number[][][][]).map(flip)
+      return { ...f, geometry: { ...g, coordinates } as typeof g }
+    }),
+  }
+}
+
 export class Globe {
   private ctx: CanvasRenderingContext2D
   private projection: GeoProjection
   private rotation: [number, number] = [20, -15]
   private zoomFactor = 1
   private fc: FeatureCollection | null = null
+  private hitFc: FeatureCollection | null = null
   private width = 0
   private height = 0
   private dpr = 1
+  private rafPending = false
   selected: Feature | null = null
   onPick: (f: Feature | null) => void = () => {}
 
@@ -33,7 +51,7 @@ export class Globe {
           60,
           Math.max(0.7, this.zoomFactor * Math.exp(-e.deltaY * 0.0015)),
         )
-        this.draw()
+        this.scheduleDraw()
       },
       { passive: false },
     )
@@ -42,6 +60,7 @@ export class Globe {
 
   setWorld(fc: FeatureCollection) {
     this.fc = fc
+    this.hitFc = reverseWinding(fc)
     this.selected = null
     this.canvas.animate([{ opacity: 0.3 }, { opacity: 1 }], { duration: 220 })
     this.draw()
@@ -85,7 +104,7 @@ export class Globe {
         this.rotation[0] + dx * k,
         Math.max(-90, Math.min(90, this.rotation[1] - dy * k)),
       ]
-      this.draw()
+      this.scheduleDraw()
     })
     this.canvas.addEventListener('pointerup', (e) => {
       dragging = false
@@ -95,8 +114,8 @@ export class Globe {
   }
 
   private pick(x: number, y: number) {
-    if (!this.fc) return
-    const ll = this.projection.invert?.([x * 1, y * 1]) ?? null
+    if (!this.fc || !this.hitFc) return
+    const ll = this.projection.invert?.([x, y]) ?? null
     if (!ll) {
       this.setSelected(null)
       this.onPick(null)
@@ -109,8 +128,9 @@ export class Globe {
       this.onPick(null)
       return
     }
-    for (const f of this.fc.features) {
-      if (geoContains(f, [ll[0], ll[1]])) {
+    for (let i = 0; i < this.hitFc.features.length; i++) {
+      if (geoContains(this.hitFc.features[i], [ll[0], ll[1]])) {
+        const f = this.fc.features[i]
         this.setSelected(f)
         this.onPick(f)
         return
@@ -118,6 +138,15 @@ export class Globe {
     }
     this.setSelected(null)
     this.onPick(null)
+  }
+
+  private scheduleDraw() {
+    if (this.rafPending) return
+    this.rafPending = true
+    requestAnimationFrame(() => {
+      this.rafPending = false
+      this.draw()
+    })
   }
 
   draw() {
