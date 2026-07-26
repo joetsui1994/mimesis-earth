@@ -24,8 +24,8 @@ draggable globe by pressing the spacebar.
 | Coordinates | Real WGS84 lon/lat on the sphere; output loads correctly in any GIS tool |
 | Hierarchy topology | Strictly nested and gapless by construction (children exactly tile parent, no sibling overlaps). Controllable "messiness" is a possible later opt-in, not core |
 | Visual/geometry style | Noise-perturbed organic borders and coastlines now ("B"); architecture leaves a slot to evolve to terrain-first elevation-derived land later ("C") |
-| Scale | Medium: 3–4 levels, hundreds to ~20k leaf units; per-level counts are user parameters |
-| Core language | Python (source of truth). Dependencies restricted to numpy/scipy/shapely so the core stays Pyodide-compatible — running the same code in-browser is a future experiment, not a requirement |
+| Scale | Medium: 3–4 levels, hundreds to ~12k leaf units (the practical ceiling at the resolution cap of 200k atoms with the 8-atoms-per-leaf validation floor; ~28s generation at that extreme, ~1s at defaults); per-level counts are user parameters |
+| Core language | Python (source of truth). Dependencies restricted to numpy/scipy/shapely/pydantic — all four ship Pyodide wheels (pydantic via pydantic_core), so the core stays Pyodide-compatible; running the same code in-browser is a future experiment, not a requirement |
 | Unit attributes | Identity (hierarchical ID, level, parent, generated name) + demographics (population, area, centroid). Extensible later (covariates etc.) |
 | Persistence | In-memory; nothing written unless explicitly exported. Spec + seed fully reproduces a world (within a generator version, recorded in the spec) |
 | Architecture | Python package + thin FastAPI server + static TS frontend (approach 1) |
@@ -109,6 +109,9 @@ world.spec                     # full spec incl. seed and generator version
   change (e.g., resolution too low for requested leaf count).
 - Determinism: same spec + seed + package version → byte-identical output.
   The generator version is recorded in the spec for this reason.
+  `GENERATOR_VERSION` is deliberately independent of the package
+  `__version__`: it tracks the generation *algorithm* and is bumped when the
+  same seed starts producing different output, not on every release.
 - geopandas is an optional extra (`mimesis-earth[geo]`); core requires only
   numpy, scipy, shapely (all Pyodide-available). Shapefile/GeoPackage export
   is delegated to geopandas (`world.gdf().to_file(...)`), not reimplemented.
