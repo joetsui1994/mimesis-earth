@@ -9,7 +9,8 @@ seed always reproduces the same world.
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -e './python[dev]'
-.venv/bin/mimesis-earth serve      # open http://localhost:8000
+./scripts/build_web.sh            # embeds the web UI (needs Node >= 18; run once, and after frontend changes)
+.venv/bin/mimesis-earth serve     # open http://localhost:8000
 ```
 
 Press **space** for a new world. Drag to rotate, scroll to zoom, click a

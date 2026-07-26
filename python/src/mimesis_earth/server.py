@@ -31,6 +31,14 @@ def _mount_frontend() -> None:
     webapp = resources.files("mimesis_earth") / "webapp"
     if webapp.is_dir():
         app.mount("/", StaticFiles(directory=str(webapp), html=True), name="webapp")
+    else:
+        import sys
+
+        print(
+            "mimesis-earth: no bundled frontend found - run ./scripts/build_web.sh "
+            "(API at /api/generate still works)",
+            file=sys.stderr,
+        )
 
 
 _mount_frontend()
