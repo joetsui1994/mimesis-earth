@@ -1,0 +1,99 @@
+:root {
+  --paper: #faf8f3;
+  --card: #fffdf8;
+  --ink: #2f3a45;
+  --dim: #7a7466;
+  --line: #c9c2b2;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: Georgia, 'Times New Roman', serif;
+  overflow: hidden;
+}
+
+#globe { display: block; width: 100vw; height: 100vh; cursor: grab; }
+#globe.dragging { cursor: grabbing; }
+
+#panel {
+  position: fixed;
+  top: 24px;
+  left: 24px;
+  width: 190px;
+  background: var(--card);
+  border: 1px solid var(--ink);
+  padding: 12px 14px;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 12px;
+}
+.panel-title { color: var(--dim); letter-spacing: 2px; font-size: 10px; margin-bottom: 8px; }
+#panel label { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 6px 0; }
+#panel input { font-family: inherit; font-size: 12px; color: var(--ink); background: transparent; border: none; border-bottom: 1px solid var(--line); width: 80px; text-align: right; }
+#panel input[type="range"] { width: 80px; accent-color: var(--ink); }
+#panel input[type="checkbox"] { width: auto; }
+#panel input:focus { outline: none; border-bottom-color: var(--ink); }
+.seed-row span { display: inline-flex; align-items: center; gap: 2px; }
+
+#levels {
+  position: fixed;
+  bottom: 56px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 14px;
+  font-size: 13px;
+}
+#levels button {
+  background: none; border: none; cursor: pointer;
+  font: inherit; color: var(--dim); padding: 2px 4px;
+}
+#levels button.active { color: var(--ink); border-bottom: 1px solid var(--ink); }
+
+#inspect {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  min-width: 200px;
+  background: var(--card);
+  border: 1px solid var(--ink);
+  padding: 12px 16px;
+}
+#inspect-name { font-size: 16px; margin-bottom: 4px; }
+.mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+.dim { color: var(--dim); }
+
+#status {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--dim);
+  font-style: italic;
+  font-size: 13px;
+}
+
+#export {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  color: var(--dim);
+}
+#export:hover { color: var(--ink); }
+
+#hint {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--dim);
+  font-size: 13px;
+}
