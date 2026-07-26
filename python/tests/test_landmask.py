@@ -49,6 +49,20 @@ def test_many_landmasses_low_spread(mesh):
         assert set(mask.group[mask.land].tolist()) == set(range(32))
 
 
+def test_many_landmasses_low_land_fraction():
+    # regression: global quantile cut must never erase whole landmass groups
+    mesh8k = build_mesh(8000, np.random.default_rng(15))
+    for spread in (0.0, 0.5, 1.0):
+        spec = WorldSpec(
+            levels=[63], n_landmasses=63, spread=spread, land_fraction=0.1,
+            resolution=8000,
+        )
+        for seed in (200, 201, 202):
+            mask = build_landmask(mesh8k, spec, np.random.default_rng(seed))
+            assert set(mask.group[mask.land].tolist()) == set(range(63))
+            assert abs(mask.land.mean() - 0.1) < 0.01
+
+
 def test_deterministic(mesh):
     spec = WorldSpec(levels=[3, 3], n_landmasses=2, resolution=4000)
     m1 = build_landmask(mesh, spec, np.random.default_rng(14))
