@@ -1,6 +1,6 @@
 import { geoContains, geoGraticule10, geoOrthographic, geoPath } from 'd3-geo'
 import type { GeoProjection } from 'd3-geo'
-import type { Feature, FeatureCollection } from 'geojson'
+import type { Feature, FeatureCollection, MultiLineString } from 'geojson'
 
 const INK = '#2f3a45'
 const SPHERE = '#f1ecdf'
@@ -24,6 +24,40 @@ export function reverseWinding(fc: FeatureCollection): FeatureCollection {
   }
 }
 
+// Polygons crossing lon ±180 arrive split (for GIS-valid export), so stroking
+// their outlines would draw the straight cut edge along the antimeridian as if
+// it were a border. Build stroke geometry that skips those seam segments
+// (fills need no such care — the two halves meet seamlessly).
+export function boundaryLines(f: Feature): Feature<MultiLineString> {
+  const rings: number[][][] = []
+  const g = f.geometry
+  if (g && g.type === 'Polygon') rings.push(...(g.coordinates as number[][][]))
+  if (g && g.type === 'MultiPolygon')
+    for (const poly of g.coordinates as number[][][][]) rings.push(...poly)
+
+  const onSeam = (a: number[], b: number[]) =>
+    Math.abs(a[0]) === 180 && Math.abs(b[0]) === 180
+  const lines: number[][][] = []
+  for (const ring of rings) {
+    let run: number[][] = []
+    for (let i = 0; i < ring.length - 1; i++) {
+      if (onSeam(ring[i], ring[i + 1])) {
+        if (run.length > 1) lines.push(run)
+        run = []
+      } else {
+        if (run.length === 0) run.push(ring[i])
+        run.push(ring[i + 1])
+      }
+    }
+    if (run.length > 1) lines.push(run)
+  }
+  return {
+    type: 'Feature',
+    properties: {},
+    geometry: { type: 'MultiLineString', coordinates: lines },
+  }
+}
+
 export class Globe {
   private ctx: CanvasRenderingContext2D
   private projection: GeoProjection
@@ -31,6 +65,7 @@ export class Globe {
   private zoomFactor = 1
   private fc: FeatureCollection | null = null
   private hitFc: FeatureCollection | null = null
+  private boundaries: Feature<MultiLineString>[] = []
   private width = 0
   private height = 0
   private dpr = 1
@@ -62,6 +97,7 @@ export class Globe {
   setWorld(fc: FeatureCollection) {
     this.fc = fc
     this.hitFc = reverseWinding(fc)
+    this.boundaries = fc.features.map(boundaryLines)
     this.selected = null
     this.selectedIndex = -1
     this.canvas.animate([{ opacity: 0.3 }, { opacity: 1 }], { duration: 220 })
@@ -189,10 +225,16 @@ export class Globe {
         path(f)
         ctx.fillStyle = i === this.selectedIndex ? HILITE : LAND
         ctx.fill()
-        ctx.strokeStyle = INK
-        ctx.lineWidth = 0.7
-        ctx.stroke()
       })
+      // strokes come from seam-filtered boundary lines so the antimeridian
+      // cut is never drawn as a border
+      ctx.strokeStyle = INK
+      ctx.lineWidth = 0.7
+      for (const b of this.boundaries) {
+        ctx.beginPath()
+        path(b)
+        ctx.stroke()
+      }
     }
 
     // sphere outline on top
