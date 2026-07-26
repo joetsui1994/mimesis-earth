@@ -37,3 +37,17 @@ def test_vmf_concentration():
     # tight samples hug mu; loose samples cover the sphere
     assert (tight @ mu).min() > 0.8
     assert (loose @ mu).min() < -0.5
+
+
+def test_vmf_accepts_non_unit_mu():
+    out = sample_vmf(np.array([0.0, 0.0, 5.0]), kappa=50.0, n=100,
+                     rng=np.random.default_rng(8))
+    np.testing.assert_allclose(np.linalg.norm(out, axis=1), 1.0, atol=1e-9)
+    assert (out @ np.array([0.0, 0.0, 1.0])).min() > 0.5
+
+
+def test_vmf_deterministic():
+    mu = np.array([0.0, 1.0, 0.0])
+    a = sample_vmf(mu, 30.0, 50, np.random.default_rng(9))
+    b = sample_vmf(mu, 30.0, 50, np.random.default_rng(9))
+    np.testing.assert_array_equal(a, b)

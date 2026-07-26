@@ -37,6 +37,8 @@ def sample_vmf(
 
     kappa -> 0 is uniform on the sphere; large kappa concentrates near mu.
     """
+    mu = np.asarray(mu, dtype=float)
+    mu = mu / np.linalg.norm(mu)
     if kappa < 1e-6:
         return unit_vectors(n, rng)
     u = rng.uniform(size=n)
