@@ -4,7 +4,7 @@ from typing import Optional
 
 import numpy as np
 from scipy.sparse import csr_matrix
-from scipy.sparse.csgraph import dijkstra
+from scipy.sparse.csgraph import connected_components, dijkstra
 
 from mimesis_earth.mesh import Mesh
 
@@ -51,8 +51,12 @@ def _subgraph(
             )
             local = np.vstack([local, np.column_stack([pos[be[:, 0]], pos[be[:, 1]]])])
             w = np.concatenate([w, bw])
-    # symmetric per-edge noise makes borders wiggly; same draw for both directions
-    w = w * (1.0 + roughness * rng.uniform(0.0, 3.0, size=len(w)))
+    # symmetric per-edge noise makes borders wiggly; same draw for both directions.
+    # roughness=0 draws nothing, so callers that need a plain (unperturbed)
+    # subgraph -- e.g. component detection for seeding -- can pass the
+    # caller's own rng here without advancing its stream.
+    if roughness > 0:
+        w = w * (1.0 + roughness * rng.uniform(0.0, 3.0, size=len(w)))
     n = len(atom_idx)
     return csr_matrix(
         (
@@ -92,12 +96,25 @@ def partition_atoms(
     if k == 1:
         return [atom_idx]
     adj = _subgraph(mesh, atom_idx, extra_edges, roughness, rng)
-    seeds = pick_seeds(mesh.points[atom_idx], k, rng)
+
+    # seed only on substantial islands: an FPS seed trapped on a tiny islet
+    # produces a starved part that Lloyd cannot rescue. roughness=0 means
+    # _subgraph draws no noise here, so this reuses the caller's rng
+    # without perturbing its stream (see the roughness>0 guard above).
+    mesh_only = _subgraph(mesh, atom_idx, None, 0.0, rng)
+    n_comp, comp = connected_components(mesh_only, directed=False)
+    sizes = np.bincount(comp)
+    substantial = sizes[comp] >= max(2, len(atom_idx) // (4 * k))
+    candidates = np.flatnonzero(substantial)
+    if len(candidates) < k:
+        candidates = np.arange(len(atom_idx))
+    seeds = candidates[pick_seeds(mesh.points[atom_idx[candidates]], k, rng)]
+
     pts = mesh.points[atom_idx]
     labels = _assign_labels(adj, seeds, pts)
     # Lloyd-style rebalancing: move each seed to its part's medoid and
     # reassign; evens out part sizes so deep hierarchy levels don't starve
-    for _ in range(2):
+    for _ in range(3):
         new_seeds = []
         for i in range(k):
             members = np.flatnonzero(labels == i)
@@ -107,6 +124,28 @@ def partition_atoms(
                 center = center / norm
             j = members[int(np.argmin(np.linalg.norm(pts[members] - center, axis=1)))]
             new_seeds.append(int(j))
+        # starved-part escape: a part far below average size (e.g. an FPS
+        # seed stuck on a tiny islet) can't be rescued by its own medoid;
+        # relocate its seed to the farthest atom of the largest part instead
+        part_sizes = np.array([int((labels == i).sum()) for i in range(k)])
+        mean_size = part_sizes.mean()
+        for i in range(k):
+            if part_sizes[i] < mean_size / 8.0:
+                big = int(part_sizes.argmax())
+                members = np.flatnonzero(labels == big)
+                far = members[
+                    int(np.argmax(np.linalg.norm(pts[members] - pts[new_seeds[big]], axis=1)))
+                ]
+                new_seeds[i] = int(far)
+        # guard against two starved parts picking the identical atom: keep
+        # the earlier occurrence's seed, revert any later duplicate to its
+        # previous seed
+        seen = set()
+        for i, s in enumerate(new_seeds):
+            if s in seen:
+                new_seeds[i] = int(seeds[i])
+            else:
+                seen.add(s)
         if np.array_equal(np.array(new_seeds), seeds):
             break
         seeds = np.array(new_seeds)
