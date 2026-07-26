@@ -30,7 +30,18 @@ export async function generateWorld(spec: Spec): Promise<WorldData> {
   })
   if (!resp.ok) {
     const body = await resp.text()
-    throw new Error(`generate failed (${resp.status}): ${body}`)
+    let message = body
+    try {
+      const parsed = JSON.parse(body)
+      const first = parsed?.detail?.[0]
+      if (first?.msg) {
+        const field = Array.isArray(first.loc) ? first.loc.slice(1).join('.') : ''
+        message = field ? `${field}: ${first.msg}` : first.msg
+      }
+    } catch {
+      // keep raw body
+    }
+    throw new Error(`generate failed (${resp.status}): ${message}`)
   }
   return resp.json()
 }

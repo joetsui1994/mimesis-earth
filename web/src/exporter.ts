@@ -10,12 +10,25 @@ export function downloadWorld(world: WorldData): void {
   }
   files['spec.json'] = strToU8(JSON.stringify(world.spec, null, 2))
 
-  const rows = ['id,level,level_name,parent_id,name,population,area_km2']
+  const rows = [
+    'id,level,level_name,parent_id,name,population,area_km2,centroid_lon,centroid_lat,landmass',
+  ]
   for (const lvl of world.levels) {
     for (const f of lvl.geojson.features) {
       const p = f.properties ?? {}
       rows.push(
-        [p.id, p.level, p.level_name, p.parent_id ?? '', p.name, p.population, p.area_km2].join(','),
+        [
+          p.id,
+          p.level,
+          p.level_name,
+          p.parent_id ?? '',
+          p.name,
+          p.population,
+          p.area_km2,
+          p.centroid_lon,
+          p.centroid_lat,
+          p.landmass ?? '',
+        ].join(','),
       )
     }
   }

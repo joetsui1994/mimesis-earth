@@ -13,6 +13,7 @@ const levelsNav = document.getElementById('levels')!
 let world: WorldData | null = null
 let levelIndex = 0
 let busy = false
+let statusTimer: number | undefined
 
 globe.onPick = (f) => (f ? showInspect(f) : hideInspect())
 
@@ -39,6 +40,7 @@ function renderLevelNav(): void {
 async function newWorld(): Promise<void> {
   if (busy) return
   busy = true
+  clearTimeout(statusTimer)
   statusEl.hidden = false
   try {
     world = await generateWorld(readSpec())
@@ -46,7 +48,7 @@ async function newWorld(): Promise<void> {
   } catch (err) {
     statusEl.hidden = false
     statusEl.textContent = String(err)
-    setTimeout(() => {
+    statusTimer = window.setTimeout(() => {
       statusEl.hidden = true
       statusEl.textContent = 'generating…'
     }, 4000)
