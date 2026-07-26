@@ -66,6 +66,18 @@ def _subgraph(
     )
 
 
+def _assign_labels(adj, seeds, pts):
+    dist = np.asarray(dijkstra(adj, directed=False, indices=seeds))
+    labels = dist.argmin(axis=0)
+    unreachable = ~np.isfinite(dist.min(axis=0))
+    if unreachable.any():
+        chord = np.linalg.norm(
+            pts[unreachable][:, None, :] - pts[seeds][None, :, :], axis=2
+        )
+        labels[unreachable] = chord.argmin(axis=1)
+    return labels
+
+
 def partition_atoms(
     mesh: Mesh,
     atom_idx: np.ndarray,
@@ -81,17 +93,24 @@ def partition_atoms(
         return [atom_idx]
     adj = _subgraph(mesh, atom_idx, extra_edges, roughness, rng)
     seeds = pick_seeds(mesh.points[atom_idx], k, rng)
-    dist = dijkstra(adj, directed=False, indices=seeds)
-    labels = np.asarray(dist).argmin(axis=0)
-    # atoms unreachable from every seed (disconnected slivers with no bridge):
-    # attach to the nearest seed by straight-line distance
-    unreachable = ~np.isfinite(np.asarray(dist).min(axis=0))
-    if unreachable.any():
-        pts = mesh.points[atom_idx]
-        chord = np.linalg.norm(
-            pts[unreachable][:, None, :] - pts[seeds][None, :, :], axis=2
-        )
-        labels[unreachable] = chord.argmin(axis=1)
+    pts = mesh.points[atom_idx]
+    labels = _assign_labels(adj, seeds, pts)
+    # Lloyd-style rebalancing: move each seed to its part's medoid and
+    # reassign; evens out part sizes so deep hierarchy levels don't starve
+    for _ in range(2):
+        new_seeds = []
+        for i in range(k):
+            members = np.flatnonzero(labels == i)
+            center = pts[members].mean(axis=0)
+            norm = np.linalg.norm(center)
+            if norm > 1e-12:
+                center = center / norm
+            j = members[int(np.argmin(np.linalg.norm(pts[members] - center, axis=1)))]
+            new_seeds.append(int(j))
+        if np.array_equal(np.array(new_seeds), seeds):
+            break
+        seeds = np.array(new_seeds)
+        labels = _assign_labels(adj, seeds, pts)
     return [atom_idx[labels == i] for i in range(k)]
 
 
@@ -107,6 +126,8 @@ def child_counts(
 
 def allocate_counts(total: int, weights: np.ndarray) -> np.ndarray:
     """Split `total` units among groups proportionally to weights, each >= 1."""
+    weights = np.asarray(weights, dtype=float)
+    assert (weights >= 0).all() and weights.sum() > 0, "weights must be non-negative with positive sum"
     assert total >= len(weights)
     share = weights / weights.sum()
     counts = np.maximum(1, np.floor(share * total)).astype(int)
