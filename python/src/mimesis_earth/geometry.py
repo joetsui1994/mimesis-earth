@@ -74,7 +74,10 @@ def _polygons_only(geom):
 
 def cell_polygon(verts3d: np.ndarray):
     """Lon/lat polygon (or MultiPolygon if split) for one Voronoi cell."""
-    poly = Polygon(_unwrapped_ring(verts3d))
+    ring = _unwrapped_ring(verts3d)
+    if len(ring) < 3:  # degenerate cell (never seen in practice; stay safe)
+        return Polygon()
+    poly = Polygon(ring)
     if not poly.is_valid:
         poly = _polygons_only(make_valid(poly))
     return _polygons_only(_normalize_lon(poly))

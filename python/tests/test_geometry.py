@@ -64,5 +64,19 @@ def test_atoms_polygon_union():
     np.testing.assert_allclose(merged.area, parts, rtol=1e-6)
 
 
+def test_atoms_polygon_cache_reuse():
+    mesh = build_mesh(500, np.random.default_rng(32))
+    cache: dict = {}
+    a = atoms_polygon(mesh, np.arange(30), cache)
+    assert len(cache) == 30
+    # overlapping request reuses cached polygons and adds only the new ones
+    b = atoms_polygon(mesh, np.arange(10, 50), cache)
+    assert len(cache) == 50
+    # cached result identical to uncached computation
+    fresh = atoms_polygon(mesh, np.arange(10, 50))
+    assert b.equals(fresh)
+    assert a.is_valid and b.is_valid
+
+
 def test_earth_radius_constant():
     assert R_EARTH_KM == 6371.0
