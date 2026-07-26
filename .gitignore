@@ -7,3 +7,4 @@ python/src/mimesis_earth/webapp/
 web/node_modules/
 web/dist/
 .pytest_cache/
+.DS_Store

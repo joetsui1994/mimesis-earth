@@ -38,3 +38,15 @@ def test_impossible_spec_is_422_not_500():
     )
     assert resp.status_code == 422
     assert "resolution" in resp.text
+
+
+def test_generation_error_becomes_422(monkeypatch):
+    from mimesis_earth import server
+
+    def boom(spec):
+        raise RuntimeError("could not place all landmasses; raise spread")
+
+    monkeypatch.setattr(server, "generate", boom)
+    resp = client.post("/api/generate", json=SPEC)
+    assert resp.status_code == 422
+    assert "landmasses" in resp.text

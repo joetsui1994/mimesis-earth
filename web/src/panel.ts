@@ -26,5 +26,8 @@ export function maybeRandomizeSeed(): void {
 }
 
 export function isTypingInPanel(target: EventTarget | null): boolean {
-  return target instanceof HTMLInputElement
+  return (
+    target instanceof HTMLInputElement &&
+    (target.type === 'text' || target.type === 'number')
+  )
 }

@@ -2,7 +2,7 @@
 
 from importlib import resources
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 
 from mimesis_earth.generate import generate
@@ -13,7 +13,12 @@ app = FastAPI(title="mimesis-earth", docs_url=None, redoc_url=None)
 
 @app.post("/api/generate")
 def generate_world(spec: WorldSpec) -> dict:
-    world = generate(spec)
+    try:
+        world = generate(spec)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(
+            status_code=422, detail=[{"loc": ["body"], "msg": str(exc)}]
+        ) from exc
     return {
         "spec": spec.model_dump(),
         "levels": [

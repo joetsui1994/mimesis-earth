@@ -40,23 +40,26 @@ function renderLevelNav(): void {
 async function newWorld(): Promise<void> {
   if (busy) return
   busy = true
-  clearTimeout(statusTimer)
-  statusEl.hidden = false
+  statusEl.textContent = 'generating…'
   try {
-    world = await generateWorld(readSpec())
-    setLevel(Math.min(levelIndex, world.levels.length - 1))
-  } catch (err) {
+    clearTimeout(statusTimer)
     statusEl.hidden = false
-    statusEl.textContent = String(err)
-    statusTimer = window.setTimeout(() => {
-      statusEl.hidden = true
-      statusEl.textContent = 'generating…'
-    }, 4000)
+    try {
+      world = await generateWorld(readSpec())
+      setLevel(Math.min(levelIndex, world.levels.length - 1))
+    } catch (err) {
+      statusEl.hidden = false
+      statusEl.textContent = String(err)
+      statusTimer = window.setTimeout(() => {
+        statusEl.hidden = true
+        statusEl.textContent = 'generating…'
+      }, 4000)
+      return
+    }
+    statusEl.hidden = true
+  } finally {
     busy = false
-    return
   }
-  statusEl.hidden = true
-  busy = false
 }
 
 window.addEventListener('keydown', (e) => {

@@ -35,6 +35,7 @@ export class Globe {
   private height = 0
   private dpr = 1
   private rafPending = false
+  private selectedIndex = -1
   selected: Feature | null = null
   onPick: (f: Feature | null) => void = () => {}
 
@@ -62,12 +63,14 @@ export class Globe {
     this.fc = fc
     this.hitFc = reverseWinding(fc)
     this.selected = null
+    this.selectedIndex = -1
     this.canvas.animate([{ opacity: 0.3 }, { opacity: 1 }], { duration: 220 })
     this.draw()
   }
 
   setSelected(f: Feature | null) {
     this.selected = f
+    this.selectedIndex = f && this.fc ? this.fc.features.indexOf(f) : -1
     this.draw()
   }
 
@@ -176,17 +179,20 @@ export class Globe {
     ctx.lineWidth = 0.5
     ctx.stroke()
 
-    // land units
-    if (this.fc) {
-      for (const f of this.fc.features) {
+    // land units — draw the winding-reversed collection so d3-geo fills the
+    // actual landmass rather than its complement (RFC 7946 polygons wind the
+    // opposite way d3-geo expects).
+    const drawFc = this.hitFc ?? this.fc
+    if (drawFc) {
+      drawFc.features.forEach((f, i) => {
         ctx.beginPath()
         path(f)
-        ctx.fillStyle = f === this.selected ? HILITE : LAND
+        ctx.fillStyle = i === this.selectedIndex ? HILITE : LAND
         ctx.fill()
         ctx.strokeStyle = INK
         ctx.lineWidth = 0.7
         ctx.stroke()
-      }
+      })
     }
 
     // sphere outline on top
