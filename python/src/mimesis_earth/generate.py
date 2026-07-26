@@ -16,7 +16,7 @@ from mimesis_earth.partition import (
     redistribute_counts,
 )
 from mimesis_earth.spec import WorldSpec
-from mimesis_earth.world import Unit, World
+from mimesis_earth.world import Unit, World, _rfc7946
 
 
 def generate(spec: WorldSpec) -> World:
@@ -143,7 +143,7 @@ def generate(spec: WorldSpec) -> World:
                     area_km2=float(mesh.areas[atoms].sum() * R_EARTH_KM**2),
                     centroid_lon=float(lon[0]),
                     centroid_lat=float(lat[0]),
-                    geometry=geoms[lvl][i],
+                    geometry=_rfc7946(geoms[lvl][i]),
                     landmass=node.get("landmass"),
                 )
             )

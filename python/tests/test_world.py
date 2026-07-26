@@ -146,6 +146,17 @@ def test_gdf_roundtrip(tmp_path, world):
     assert len(back) == 36
 
 
+def test_gdf_export_winding(tmp_path, world):
+    geopandas = pytest.importorskip("geopandas")
+    path = tmp_path / "gdf_export.geojson"
+    world.gdf(level=0).to_file(path, driver="GeoJSON")
+    back = geopandas.read_file(path)
+    for g in back.geometry:
+        polys = [g] if g.geom_type == "Polygon" else list(g.geoms)
+        for p in polys:
+            assert p.exterior.is_ccw
+
+
 def test_exported_geojson_valid_and_consistent(tmp_path, world):
     from shapely.geometry import shape
 

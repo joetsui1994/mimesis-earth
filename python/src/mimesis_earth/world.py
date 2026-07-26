@@ -55,7 +55,7 @@ class World:
         return [u for u in self.units if u.level == level]
 
     def _feature(self, u: Unit) -> dict:
-        geom = mapping(_rfc7946(u.geometry))
+        geom = mapping(u.geometry)
         geom["coordinates"] = _round_coords(geom["coordinates"])
         return {
             "type": "Feature",
