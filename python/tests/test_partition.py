@@ -117,7 +117,7 @@ def test_partition_contiguous_across_bridges(mesh):
 
 
 def test_allocate_counts_rejects_zero_weights():
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         allocate_counts(5, np.zeros(5))
 
 

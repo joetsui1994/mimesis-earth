@@ -6,7 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from shapely.geometry import mapping
+from shapely.geometry import MultiPolygon, mapping
+from shapely.geometry.polygon import orient
 
 from mimesis_earth.spec import WorldSpec
 
@@ -19,6 +20,15 @@ def _round_coords(obj):
     if isinstance(obj, (list, tuple)):
         return [_round_coords(x) for x in obj]
     return obj
+
+
+def _rfc7946(geom):
+    """CCW exteriors, CW holes, per RFC 7946."""
+    if geom.geom_type == "Polygon":
+        return orient(geom, 1.0)
+    if geom.geom_type == "MultiPolygon":
+        return MultiPolygon([orient(p, 1.0) for p in geom.geoms])
+    return geom
 
 
 @dataclass
@@ -45,7 +55,7 @@ class World:
         return [u for u in self.units if u.level == level]
 
     def _feature(self, u: Unit) -> dict:
-        geom = mapping(u.geometry)
+        geom = mapping(_rfc7946(u.geometry))
         geom["coordinates"] = _round_coords(geom["coordinates"])
         return {
             "type": "Feature",
@@ -59,6 +69,7 @@ class World:
                 "area_km2": round(u.area_km2, 3),
                 "centroid_lon": round(u.centroid_lon, COORD_DECIMALS),
                 "centroid_lat": round(u.centroid_lat, COORD_DECIMALS),
+                "landmass": u.landmass,
             },
             "geometry": geom,
         }
@@ -87,6 +98,7 @@ class World:
                 [
                     "id", "level", "level_name", "parent_id", "name",
                     "population", "area_km2", "centroid_lon", "centroid_lat",
+                    "landmass",
                 ]
             )
             for u in sorted(self.units, key=lambda u: (u.level, u.id)):
@@ -96,6 +108,7 @@ class World:
                         u.population, round(u.area_km2, 3),
                         round(u.centroid_lon, COORD_DECIMALS),
                         round(u.centroid_lat, COORD_DECIMALS),
+                        u.landmass if u.landmass is not None else "",
                     ]
                 )
 
@@ -115,6 +128,7 @@ class World:
                 "area_km2": u.area_km2,
                 "centroid_lon": u.centroid_lon,
                 "centroid_lat": u.centroid_lat,
+                "landmass": u.landmass,
             }
             for u in units
         ]

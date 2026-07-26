@@ -1,6 +1,7 @@
 """The generation pipeline: mesh -> land mask -> partitions -> geometry -> attributes."""
 
 import numpy as np
+import shapely
 from shapely.ops import unary_union
 
 from mimesis_earth.attributes import population_density, round_preserving_sum
@@ -88,7 +89,7 @@ def generate(spec: WorldSpec) -> World:
         for i, node in enumerate(level_nodes[lvl + 1]):
             children_of[node["parent"]].append(geoms[lvl + 1][i])
         for i, childs in enumerate(children_of):
-            geoms[lvl][i] = unary_union(childs)
+            geoms[lvl][i] = shapely.set_precision(unary_union(childs), 1e-9)
 
     # populations bottom-up
     pops: list[np.ndarray] = [None] * n_levels
@@ -102,19 +103,29 @@ def generate(spec: WorldSpec) -> World:
     # build Unit objects top-down so ids exist before children need them
     id_grids: list[list[str]] = [[None] * len(level_nodes[lvl]) for lvl in range(n_levels)]
     child_counter: list[dict] = [dict() for _ in range(n_levels)]
+
+    widths = []
+    for lvl in range(n_levels):
+        if lvl == 0:
+            max_idx = len(level_nodes[0])
+        else:
+            parents_arr = np.array([n["parent"] for n in level_nodes[lvl]])
+            max_idx = int(np.bincount(parents_arr).max())
+        widths.append(max(2, len(str(max_idx))))
+
     for lvl in range(n_levels):
         letter = spec.level_names[lvl][0].upper()
         for i, node in enumerate(level_nodes[lvl]):
             if lvl == 0:
                 index = i + 1
-                uid = f"{letter}{index:02d}"
+                uid = f"{letter}{index:0{widths[lvl]}d}"
                 parent_id = None
             else:
                 parent_pos = node["parent"]
                 parent_id = id_grids[lvl - 1][parent_pos]
                 index = child_counter[lvl].get(parent_pos, 0) + 1
                 child_counter[lvl][parent_pos] = index
-                uid = f"{parent_id}.{letter}{index:02d}"
+                uid = f"{parent_id}.{letter}{index:0{widths[lvl]}d}"
             id_grids[lvl][i] = uid
             atoms = node["atoms"]
             weights = mesh.areas[atoms]

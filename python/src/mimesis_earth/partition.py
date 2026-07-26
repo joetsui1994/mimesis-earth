@@ -92,7 +92,8 @@ def partition_atoms(
 ) -> list[np.ndarray]:
     """Split atom_idx into k non-empty contiguous parts. Returns global index arrays."""
     atom_idx = np.asarray(atom_idx)
-    assert 1 <= k <= len(atom_idx), f"cannot cut {len(atom_idx)} atoms into {k} parts"
+    if not 1 <= k <= len(atom_idx):
+        raise ValueError(f"cannot cut {len(atom_idx)} atoms into {k} parts")
     if k == 1:
         return [atom_idx]
     adj = _subgraph(mesh, atom_idx, extra_edges, roughness, rng)
@@ -166,8 +167,10 @@ def child_counts(
 def allocate_counts(total: int, weights: np.ndarray) -> np.ndarray:
     """Split `total` units among groups proportionally to weights, each >= 1."""
     weights = np.asarray(weights, dtype=float)
-    assert (weights >= 0).all() and weights.sum() > 0, "weights must be non-negative with positive sum"
-    assert total >= len(weights)
+    if not ((weights >= 0).all() and weights.sum() > 0):
+        raise ValueError("weights must be non-negative with positive sum")
+    if not total >= len(weights):
+        raise ValueError("total must be >= number of groups")
     share = weights / weights.sum()
     counts = np.maximum(1, np.floor(share * total)).astype(int)
     while counts.sum() > total:
@@ -185,7 +188,8 @@ def redistribute_counts(counts: np.ndarray, capacities: np.ndarray) -> np.ndarra
     parents with the most headroom. Preserves the total exactly."""
     counts = np.asarray(counts, dtype=int).copy()
     capacities = np.asarray(capacities, dtype=int)
-    assert counts.sum() <= capacities.sum(), "not enough total capacity"
+    if not counts.sum() <= capacities.sum():
+        raise ValueError("not enough total capacity")
     excess = int(np.clip(counts - capacities, 0, None).sum())
     counts = np.minimum(counts, capacities)
     while excess > 0:

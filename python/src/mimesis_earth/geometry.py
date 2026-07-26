@@ -6,6 +6,7 @@ Handles the two classic sphere-to-plane traps:
 """
 
 import numpy as np
+import shapely
 from shapely.affinity import translate
 from shapely.geometry import GeometryCollection, Polygon, box
 from shapely.ops import unary_union
@@ -95,4 +96,4 @@ def atoms_polygon(mesh, atom_ids, cell_cache: dict | None = None):
         if cell_cache is not None:
             cell_cache[i] = g
         geoms.append(g)
-    return _polygons_only(unary_union(geoms))
+    return shapely.set_precision(_polygons_only(unary_union(geoms)), 1e-9)

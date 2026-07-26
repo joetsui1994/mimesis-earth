@@ -144,3 +144,70 @@ def test_gdf_roundtrip(tmp_path, world):
     gdf.to_file(path)
     back = geopandas.read_file(path)
     assert len(back) == 36
+
+
+def test_exported_geojson_valid_and_consistent(tmp_path, world):
+    from shapely.geometry import shape
+
+    out = tmp_path / "wexp"
+    world.to_geojson(out)
+    geoms_by_level = {}
+    for level, name in enumerate(world.spec.level_names):
+        fc = json.loads((out / f"level{level}_{name}.geojson").read_text())
+        geoms = {}
+        for f in fc["features"]:
+            g = shape(f["geometry"])
+            assert g.is_valid, f["properties"]["id"]
+            assert not g.is_empty
+            geoms[f["properties"]["id"]] = g
+        geoms_by_level[level] = geoms
+    # invariants must hold on the exported bytes, not just in memory
+    for level in range(1, len(world.spec.level_names)):
+        children_by_parent: dict = {}
+        for u in world.units_at(level):
+            children_by_parent.setdefault(u.parent_id, []).append(
+                geoms_by_level[level][u.id]
+            )
+        for pid, childs in children_by_parent.items():
+            merged = unary_union(childs)
+            diff = geoms_by_level[level - 1][pid].symmetric_difference(merged)
+            assert diff.area < 1e-9, pid
+
+
+def test_exported_ring_winding(tmp_path, world):
+    from shapely.geometry import shape
+
+    out = tmp_path / "wwind"
+    world.to_geojson(out)
+    for level, name in enumerate(world.spec.level_names):
+        fc = json.loads((out / f"level{level}_{name}.geojson").read_text())
+        for f in fc["features"]:
+            g = shape(f["geometry"])
+            polys = [g] if g.geom_type == "Polygon" else list(g.geoms)
+            for p in polys:
+                assert p.exterior.is_ccw, f["properties"]["id"]
+                for hole in p.interiors:
+                    assert not hole.is_ccw, f["properties"]["id"]
+
+
+def test_invariants_across_spec_shapes():
+    specs = [
+        WorldSpec(levels=[12], n_landmasses=4, resolution=6000, seed=3),
+        WorldSpec(levels=[6, 5], count_variance=0.5, resolution=6000, seed=4),
+        WorldSpec(
+            levels=[4, 3, 2], n_landmasses=1, spread=1.0,
+            coast_ruggedness=1.0, resolution=6000, seed=5,
+        ),
+    ]
+    for spec in specs:
+        w = generate(spec)
+        for u in w.units:
+            assert u.geometry.is_valid and not u.geometry.is_empty, (spec.seed, u.id)
+        if spec.count_variance == 0:
+            expected = 1
+            for level, c in enumerate(spec.levels):
+                expected *= c
+                assert len(w.units_at(level)) == expected, (spec.seed, level)
+        leaves = w.units_at(len(spec.levels) - 1)
+        assert sum(u.population for u in leaves) == spec.total_population
+        assert len({u.landmass for u in w.units_at(0)}) == spec.n_landmasses
