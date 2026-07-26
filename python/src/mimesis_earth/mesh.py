@@ -11,7 +11,7 @@ from scipy.spatial import ConvexHull, SphericalVoronoi
 class Mesh:
     points: np.ndarray  # (n, 3) atom centers on the unit sphere
     vertices: np.ndarray  # (m, 3) Voronoi vertices on the unit sphere
-    regions: list  # per atom: ordered Voronoi vertex indices (closed ring)
+    regions: list  # per atom: ordered Voronoi vertex indices (ring, not explicitly closed)
     edges: np.ndarray  # (e, 2) unique undirected atom adjacencies, col0 < col1
     adjacency: csr_matrix  # symmetric (n, n), weights = geodesic edge length
     areas: np.ndarray  # (n,) spherical cell areas on the unit sphere
