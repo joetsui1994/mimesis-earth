@@ -28,6 +28,9 @@ def population_density(
 def round_preserving_sum(x: np.ndarray, total: int) -> np.ndarray:
     """Scale positive weights x to integers summing exactly to `total`
     (largest-remainder method)."""
+    x = np.asarray(x, dtype=float)
+    if x.sum() <= 0:
+        raise ValueError("x must have positive sum")
     scaled = x * (total / x.sum())
     base = np.floor(scaled).astype(np.int64)
     remainder = int(total - base.sum())
