@@ -38,6 +38,17 @@ def test_bridges_connect_within_groups(mesh):
         assert mask.group[a] == mask.group[b]
 
 
+def test_many_landmasses_low_spread(mesh):
+    # regression: kappa must scale with n_landmasses or this fails structurally
+    spec = WorldSpec(
+        levels=[32], n_landmasses=32, spread=0.0, land_fraction=0.3,
+        resolution=4000,
+    )
+    for seed in range(100, 105):
+        mask = build_landmask(mesh, spec, np.random.default_rng(seed))
+        assert set(mask.group[mask.land].tolist()) == set(range(32))
+
+
 def test_deterministic(mesh):
     spec = WorldSpec(levels=[3, 3], n_landmasses=2, resolution=4000)
     m1 = build_landmask(mesh, spec, np.random.default_rng(14))

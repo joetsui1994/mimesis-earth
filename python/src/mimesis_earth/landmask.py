@@ -19,9 +19,13 @@ class LandMask:
 
 
 def build_landmask(mesh: Mesh, spec: WorldSpec, rng: np.random.Generator) -> LandMask:
-    # spread=0 -> tightly clustered landmass seeds; spread=1 -> uniform
-    kappa = 100.0 * (1.0 - spec.spread) ** 4
-    for _ in range(10):
+    # spread=0 -> tightly clustered landmass seeds; spread=1 -> uniform.
+    # Divided by n_landmasses so the seed cluster's angular footprint grows
+    # with the number of seeds (K patches need ~K times the cap area);
+    # each retry relaxes concentration further so retries change geometry.
+    base_kappa = 100.0 * (1.0 - spec.spread) ** 4 / spec.n_landmasses
+    for attempt in range(10):
+        kappa = base_kappa * 0.7**attempt
         center = unit_vectors(1, rng)[0]
         seeds = sample_vmf(center, kappa, spec.n_landmasses, rng)
         angle = np.arccos(np.clip(mesh.points @ seeds.T, -1.0, 1.0))  # (n, K)
@@ -37,7 +41,8 @@ def build_landmask(mesh: Mesh, spec: WorldSpec, rng: np.random.Generator) -> Lan
             bridges = _bridge_islands(mesh, group, spec.n_landmasses)
             return LandMask(land=land, group=group, bridges=bridges)
     raise RuntimeError(
-        "could not place all landmasses; try a different seed or raise land_fraction"
+        "could not place all landmasses; raise spread, lower n_landmasses, "
+        "or raise resolution"
     )
 
 
