@@ -4,7 +4,6 @@ import pytest
 from mimesis_earth.mesh import build_mesh
 from mimesis_earth.partition import (
     allocate_counts,
-    child_counts,
     partition_atoms,
     pick_seeds,
 )
@@ -54,17 +53,6 @@ def test_partition_deterministic(mesh):
     b = partition_atoms(mesh, atom_idx, 4, None, 0.5, np.random.default_rng(24))
     for pa, pb in zip(a, b):
         np.testing.assert_array_equal(pa, pb)
-
-
-def test_child_counts_exact_when_variance_zero():
-    counts = child_counts(6, 10, 0.0, np.random.default_rng(25))
-    assert (counts == 6).all()
-
-
-def test_child_counts_varies_and_positive():
-    counts = child_counts(6, 200, 0.5, np.random.default_rng(26))
-    assert counts.min() >= 1
-    assert counts.std() > 0
 
 
 def test_allocate_counts():
@@ -265,3 +253,45 @@ def test_partition_weighted_contiguity_fuzz():
                 sub = big.adjacency[p][:, p]
                 n_comp, _ = connected_components(sub, directed=False)
                 assert n_comp == 1, (sv, seed, len(p))
+
+
+def test_plan_islands_single_component(mesh):
+    from mimesis_earth.partition import plan_islands
+
+    plans = plan_islands(mesh, np.arange(2000), 5, 0.7, np.random.default_rng(80))
+    assert len(plans) == 1
+    atoms, k = plans[0]
+    assert k == 5 and len(atoms) == 2000
+
+
+def test_plan_islands_allocates_per_island(mesh):
+    from mimesis_earth.partition import plan_islands
+
+    z = mesh.points[:, 2]
+    north = np.flatnonzero(z > 0.88)
+    south = np.flatnonzero(z < -0.88)
+    atom_idx = np.concatenate([north, south])
+    plans = plan_islands(mesh, atom_idx, 6, 0.7, np.random.default_rng(81))
+    assert len(plans) == 2
+    ks = sorted(k for _, k in plans)
+    assert sum(ks) == 6 and ks[0] >= 1
+    covered = np.sort(np.concatenate([a for a, _ in plans]))
+    np.testing.assert_array_equal(covered, np.sort(atom_idx))
+
+
+def test_plan_islands_clusters_when_quota_short(mesh):
+    from mimesis_earth.partition import plan_islands
+
+    z = mesh.points[:, 2]
+    bands = [
+        np.flatnonzero(z > 0.9),
+        np.flatnonzero((z > 0.4) & (z < 0.6)),
+        np.flatnonzero((z > -0.6) & (z < -0.4)),
+        np.flatnonzero(z < -0.9),
+    ]
+    atom_idx = np.concatenate(bands)
+    plans = plan_islands(mesh, atom_idx, 2, 0.7, np.random.default_rng(82))
+    assert len(plans) == 2
+    assert all(k == 1 for _, k in plans)
+    covered = np.sort(np.concatenate([a for a, _ in plans]))
+    np.testing.assert_array_equal(covered, np.sort(atom_idx))

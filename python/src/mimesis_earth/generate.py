@@ -11,8 +11,11 @@ from mimesis_earth.mesh import build_mesh
 from mimesis_earth.naming import make_namer
 from mimesis_earth.partition import (
     allocate_counts,
-    child_counts,
+    coupled_counts,
+    count_sizeable_islands,
+    honor_minimums,
     partition_atoms,
+    plan_islands,
     redistribute_counts,
 )
 from mimesis_earth.spec import WorldSpec
@@ -33,12 +36,15 @@ def generate(spec: WorldSpec) -> World:
     group_sizes = np.array(
         [(mask.group == g).sum() for g in range(spec.n_landmasses)], dtype=float
     )
-    counts0 = allocate_counts(spec.levels[0], group_sizes)
+    counts0 = allocate_counts(
+        spec.levels[0], group_sizes**spec.count_coupling
+    )
     top: list[dict] = []
     for g in range(spec.n_landmasses):
         idx = np.flatnonzero(mask.group == g)
         parts = partition_atoms(
-            mesh, idx, int(counts0[g]), mask.bridges, roughness[0], rng
+            mesh, idx, int(counts0[g]), mask.bridges, roughness[0], rng,
+            size_variance=spec.size_variance,
         )
         for atoms in parts:
             top.append({"atoms": atoms, "parent": None, "landmass": g})
@@ -46,18 +52,36 @@ def generate(spec: WorldSpec) -> World:
 
     for level in range(1, n_levels):
         prev = level_nodes[level - 1]
-        counts = child_counts(spec.levels[level], len(prev), spec.count_variance, rng)
-        capacities = np.array([len(p["atoms"]) for p in prev])
-        # preserve exact per-level totals even if a parent is atom-starved
+        parent_sizes = np.array([len(p["atoms"]) for p in prev], dtype=float)
+        level_total = spec.levels[level] * len(prev)
+        counts = coupled_counts(
+            level_total, parent_sizes, spec.count_coupling,
+            spec.count_variance, rng,
+        )
+        capacities = parent_sizes.astype(int)
         counts = redistribute_counts(counts, capacities)
+        # island-rich parents need enough children for one per island where
+        # the level total allows; shortfalls degrade to island clustering
+        minimums = np.array(
+            [
+                min(count_sizeable_islands(mesh, p["atoms"], rng), int(capacities[i]))
+                for i, p in enumerate(prev)
+            ]
+        )
+        assert (minimums >= 1).all() and (minimums <= capacities).all()
+        counts = honor_minimums(counts, minimums)
         current: list[dict] = []
         for parent_index, parent in enumerate(prev):
             k = int(counts[parent_index])
-            parts = partition_atoms(
-                mesh, parent["atoms"], k, mask.bridges, roughness[level], rng
-            )
-            for atoms in parts:
-                current.append({"atoms": atoms, "parent": parent_index})
+            for group_atoms, group_k in plan_islands(
+                mesh, parent["atoms"], k, spec.count_coupling, rng
+            ):
+                parts = partition_atoms(
+                    mesh, group_atoms, group_k, None, roughness[level], rng,
+                    size_variance=spec.size_variance,
+                )
+                for atoms in parts:
+                    current.append({"atoms": atoms, "parent": parent_index})
         level_nodes.append(current)
 
     # --- population on leaves --------------------------------------------

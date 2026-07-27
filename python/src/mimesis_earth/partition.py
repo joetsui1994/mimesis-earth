@@ -212,16 +212,6 @@ def partition_atoms(
     return [atom_idx[labels == i] for i in range(k)]
 
 
-def child_counts(
-    mean: int, n_parents: int, variance: float, rng: np.random.Generator
-) -> np.ndarray:
-    """How many children each parent gets. variance=0 -> exactly `mean` each."""
-    if variance <= 0:
-        return np.full(n_parents, mean, dtype=int)
-    counts = np.round(rng.normal(mean, variance * mean, n_parents)).astype(int)
-    return np.clip(counts, 1, None)
-
-
 def allocate_counts(total: int, weights: np.ndarray) -> np.ndarray:
     """Split `total` units among groups proportionally to weights, each >= 1."""
     weights = np.asarray(weights, dtype=float)
@@ -289,3 +279,79 @@ def honor_minimums(counts: np.ndarray, minimums: np.ndarray) -> np.ndarray:
             return counts
         counts[needy[int(np.argmax(need[needy]))]] += 1
         counts[donors[int(np.argmax(surplus[donors]))]] -= 1
+
+
+ISLET_MAX_ATOMS = 8
+
+
+def _island_analysis(mesh: Mesh, atom_idx: np.ndarray, rng: np.random.Generator):
+    """Connected components of atom_idx over mesh edges only (no bridges).
+    Returns (n_comp, comp_labels, comp_sizes, sizeable_component_ids)."""
+    sub = _subgraph(mesh, atom_idx, None, 0.0, rng)  # roughness 0: no rng draws
+    n_comp, comp = connected_components(sub, directed=False)
+    sizes = np.bincount(comp)
+    sizeable = np.flatnonzero(sizes >= ISLET_MAX_ATOMS)
+    if len(sizeable) == 0:
+        sizeable = np.array([int(sizes.argmax())])
+    return n_comp, comp, sizes, sizeable
+
+
+def count_sizeable_islands(
+    mesh: Mesh, atom_idx: np.ndarray, rng: np.random.Generator
+) -> int:
+    _, _, _, sizeable = _island_analysis(mesh, np.asarray(atom_idx), rng)
+    return len(sizeable)
+
+
+def plan_islands(
+    mesh: Mesh,
+    atom_idx: np.ndarray,
+    k: int,
+    coupling: float,
+    rng: np.random.Generator,
+) -> list[tuple[np.ndarray, int]]:
+    """Split a parent's atoms into island groups with per-group child counts
+    summing to k. Sizeable islands each host >= 1 child when quota allows;
+    islets attach to the nearest sizeable island. With more sizeable islands
+    than quota, islands are clustered by proximity (each cluster = 1 child)."""
+    atom_idx = np.asarray(atom_idx)
+    n_comp, comp, sizes, sizeable = _island_analysis(mesh, atom_idx, rng)
+    if n_comp == 1:
+        return [(atom_idx, k)]
+    centroids = np.stack(
+        [mesh.points[atom_idx[comp == c]].mean(axis=0) for c in range(n_comp)]
+    )
+    # attach every non-sizeable component to its nearest sizeable island
+    owner = np.empty(n_comp, dtype=int)
+    for c in range(n_comp):
+        if c in set(sizeable.tolist()):
+            owner[c] = c
+        else:
+            d = np.linalg.norm(centroids[sizeable] - centroids[c], axis=1)
+            owner[c] = int(sizeable[int(d.argmin())])
+    m = len(sizeable)
+    if m <= k:
+        group_sizes = np.array(
+            [float(sizes[owner == s].sum()) for s in sizeable]
+        )
+        alloc = allocate_counts(k, group_sizes**coupling)
+        alloc = redistribute_counts(alloc, group_sizes.astype(int))
+        groups = list(zip(sizeable.tolist(), alloc.tolist()))
+    else:
+        order = sizeable[np.argsort(-sizes[sizeable])]
+        cluster_seeds = order[:k]
+        seed_set = np.asarray(cluster_seeds)
+        cluster_of = {int(s): int(s) for s in cluster_seeds}
+        for c in order[k:]:
+            d = np.linalg.norm(centroids[seed_set] - centroids[int(c)], axis=1)
+            cluster_of[int(c)] = int(seed_set[int(d.argmin())])
+        for c in range(n_comp):
+            owner[c] = cluster_of[int(owner[c])] if int(owner[c]) in cluster_of else int(owner[c])
+        # any owner not itself a cluster seed maps through cluster_of
+        owner = np.array([cluster_of.get(int(o), int(o)) for o in owner])
+        groups = [(int(s), 1) for s in cluster_seeds]
+    out = []
+    for s, count in groups:
+        members = atom_idx[owner[comp] == s]
+        out.append((members, int(count)))
+    return out
