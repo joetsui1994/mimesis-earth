@@ -8,6 +8,7 @@ export interface Spec {
   border_roughness: number
   size_variance: number
   count_coupling: number
+  count_variance: number
   total_population: number
   resolution: number
   seed: number

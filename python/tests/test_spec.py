@@ -95,3 +95,6 @@ def test_rejects_bad_size_variance_and_coupling():
         WorldSpec(count_coupling=-0.1)
     # extreme-but-legal skew is accepted
     assert WorldSpec(size_variance=2.0).size_variance == 2.0
+    with pytest.raises(ValidationError):
+        WorldSpec(count_variance=2.5)
+    assert WorldSpec(count_variance=2.0).count_variance == 2.0

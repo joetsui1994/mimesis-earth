@@ -139,7 +139,7 @@ def test_coupled_counts_exact_total_and_min_one():
     from mimesis_earth.partition import coupled_counts
 
     sizes = np.array([1000.0, 100.0, 10.0])
-    for variance in (0.0, 0.5, 1.0):
+    for variance in (0.0, 0.5, 1.0, 2.0):
         out = coupled_counts(30, sizes, 0.7, variance, np.random.default_rng(70))
         assert out.sum() == 30
         assert (out >= 1).all()

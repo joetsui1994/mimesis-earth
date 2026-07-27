@@ -23,7 +23,7 @@ class WorldSpec(BaseModel):
     land_fraction: float = Field(default=0.3, gt=0.0, lt=0.8)
     coast_ruggedness: float = Field(default=0.5, ge=0.0, le=1.0)
     border_roughness: Union[float, list[float]] = 0.4
-    count_variance: float = Field(default=0.2, ge=0.0, le=1.0)
+    count_variance: float = Field(default=0.2, ge=0.0, le=2.0)
     size_variance: float = Field(default=0.4, ge=0.0, le=2.0)
     count_coupling: float = Field(default=0.7, ge=0.0, le=1.0)
     total_population: int = Field(default=50_000_000, gt=0)
