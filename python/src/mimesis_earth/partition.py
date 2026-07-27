@@ -70,15 +70,15 @@ def _subgraph(
     )
 
 
-def _assign_labels(adj, seeds, pts):
+def _assign_labels(adj, seeds, pts, weights):
     dist = np.asarray(dijkstra(adj, directed=False, indices=seeds))
-    labels = dist.argmin(axis=0)
+    labels = (dist / weights[:, None]).argmin(axis=0)
     unreachable = ~np.isfinite(dist.min(axis=0))
     if unreachable.any():
         chord = np.linalg.norm(
             pts[unreachable][:, None, :] - pts[seeds][None, :, :], axis=2
         )
-        labels[unreachable] = chord.argmin(axis=1)
+        labels[unreachable] = (chord / weights[None, :]).argmin(axis=1)
     return labels
 
 
@@ -89,6 +89,7 @@ def partition_atoms(
     extra_edges: Optional[np.ndarray],
     roughness: float,
     rng: np.random.Generator,
+    size_variance: float = 0.0,
 ) -> list[np.ndarray]:
     """Split atom_idx into k non-empty contiguous parts. Returns global index arrays."""
     atom_idx = np.asarray(atom_idx)
@@ -111,8 +112,14 @@ def partition_atoms(
         candidates = np.arange(len(atom_idx))
     seeds = candidates[pick_seeds(mesh.points[atom_idx[candidates]], k, rng)]
 
+    weights = (
+        rng.lognormal(0.0, size_variance, size=k)
+        if size_variance > 0
+        else np.ones(k)
+    )
+
     pts = mesh.points[atom_idx]
-    labels = _assign_labels(adj, seeds, pts)
+    labels = _assign_labels(adj, seeds, pts, weights)
     # Lloyd-style rebalancing: move each seed to its part's medoid and
     # reassign; evens out part sizes so deep hierarchy levels don't starve
     for _ in range(3):
@@ -129,9 +136,9 @@ def partition_atoms(
         # seed stuck on a tiny islet) can't be rescued by its own medoid;
         # relocate its seed to the farthest atom of the largest part instead
         part_sizes = np.array([int((labels == i).sum()) for i in range(k)])
-        mean_size = part_sizes.mean()
+        expected = len(atom_idx) * weights / weights.sum()
         for i in range(k):
-            if part_sizes[i] < mean_size / 8.0:
+            if part_sizes[i] < max(2.0, expected[i] / 8.0):
                 big = int(part_sizes.argmax())
                 members = np.flatnonzero(labels == big)
                 far = members[
@@ -150,7 +157,7 @@ def partition_atoms(
         if np.array_equal(np.array(new_seeds), seeds):
             break
         seeds = np.array(new_seeds)
-        labels = _assign_labels(adj, seeds, pts)
+        labels = _assign_labels(adj, seeds, pts, weights)
     return [atom_idx[labels == i] for i in range(k)]
 
 

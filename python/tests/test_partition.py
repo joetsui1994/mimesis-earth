@@ -187,3 +187,33 @@ def test_honor_minimums():
     # shortfall tolerated when donors run dry
     out2 = honor_minimums(np.array([1, 1]), np.array([5, 5]))
     assert out2.sum() == 2
+
+
+def test_partition_weighted_sizes():
+    big = build_mesh(4000, np.random.default_rng(60))
+    atom_idx = np.arange(4000)
+    cvs = {}
+    for sv in (0.0, 0.8):
+        vals = []
+        for seed in (61, 62, 63):
+            parts = partition_atoms(
+                big, atom_idx, 8, None, 0.4, np.random.default_rng(seed),
+                size_variance=sv,
+            )
+            sizes = np.array([len(p) for p in parts])
+            assert sizes.sum() == 4000
+            assert sizes.min() > 0
+            vals.append(sizes.std() / sizes.mean())
+        cvs[sv] = float(np.mean(vals))
+    assert cvs[0.0] < 0.15
+    assert cvs[0.8] > 0.3
+
+
+def test_partition_weighted_deterministic(mesh):
+    atom_idx = np.arange(1500)
+    a = partition_atoms(mesh, atom_idx, 5, None, 0.5,
+                        np.random.default_rng(64), size_variance=0.7)
+    b = partition_atoms(mesh, atom_idx, 5, None, 0.5,
+                        np.random.default_rng(64), size_variance=0.7)
+    for pa, pb in zip(a, b):
+        np.testing.assert_array_equal(pa, pb)
