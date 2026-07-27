@@ -272,3 +272,13 @@ def test_exact_totals_at_any_variance_and_coupled_counts_vary():
     for u in world.units_at(1):
         per_parent[u.parent_id] = per_parent.get(u.parent_id, 0) + 1
     assert len(set(per_parent.values())) > 1
+
+
+def test_border_meander_changes_borders_only_when_on():
+    base = WorldSpec(levels=[4, 3], n_landmasses=2, resolution=6000, seed=31)
+    w_on = generate(base)
+    w_on2 = generate(base)
+    w_off = generate(base.model_copy(update={"border_meander": 0.0}))
+    j_on = json.dumps(w_on.geojson_dict(1), sort_keys=True)
+    assert j_on == json.dumps(w_on2.geojson_dict(1), sort_keys=True)
+    assert j_on != json.dumps(w_off.geojson_dict(1), sort_keys=True)

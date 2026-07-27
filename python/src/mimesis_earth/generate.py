@@ -9,6 +9,7 @@ from mimesis_earth.geometry import R_EARTH_KM, atoms_polygon, xyz_to_lonlat
 from mimesis_earth.landmask import build_landmask
 from mimesis_earth.mesh import build_mesh
 from mimesis_earth.naming import make_namer
+from mimesis_earth.noise import sphere_noise
 from mimesis_earth.partition import (
     _island_analysis,
     allocate_counts,
@@ -26,6 +27,10 @@ def generate(spec: WorldSpec, _capture: dict | None = None) -> World:
     rng = np.random.default_rng(spec.seed)
     mesh = build_mesh(spec.resolution, rng)
     mask = build_landmask(mesh, spec, rng)
+    # phantom-terrain cost field: borders settle on its crests (watersheds).
+    # Drawn unconditionally so the rng stream layout is knob-independent.
+    terrain = sphere_noise(mesh.points, rng, octaves=6, base_freq=2.0)
+    atom_cost = np.exp(1.5 * spec.border_meander * terrain)
     roughness = spec.border_roughness_per_level()
     n_levels = len(spec.levels)
 
@@ -45,7 +50,7 @@ def generate(spec: WorldSpec, _capture: dict | None = None) -> World:
         idx = np.flatnonzero(mask.group == g)
         parts = partition_atoms(
             mesh, idx, int(counts0[g]), mask.bridges, roughness[0], rng,
-            size_variance=spec.size_variance,
+            size_variance=spec.size_variance, atom_cost=atom_cost,
         )
         for atoms in parts:
             top.append({"atoms": atoms, "parent": None, "landmass": g})
@@ -83,7 +88,7 @@ def generate(spec: WorldSpec, _capture: dict | None = None) -> World:
             ):
                 parts = partition_atoms(
                     mesh, group_atoms, group_k, None, roughness[level], rng,
-                    size_variance=spec.size_variance,
+                    size_variance=spec.size_variance, atom_cost=atom_cost,
                 )
                 for atoms in parts:
                     current.append({"atoms": atoms, "parent": parent_index})
