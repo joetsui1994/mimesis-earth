@@ -19,14 +19,14 @@ class WorldSpec(BaseModel):
     levels: list[int] = Field(default=[6, 5, 6], min_length=1, max_length=5)
     level_names: Optional[list[str]] = None
     n_landmasses: int = Field(default=3, ge=1, le=64)
-    spread: float = Field(default=0.5, ge=0.0, le=1.0)
+    spread: float = Field(default=0.7, ge=0.0, le=1.0)
     land_fraction: float = Field(default=0.3, gt=0.0, lt=0.8)
     coast_ruggedness: float = Field(default=0.5, ge=0.0, le=1.0)
-    border_roughness: Union[float, list[float]] = 0.4
+    border_roughness: Union[float, list[float]] = 0.7
     count_variance: float = Field(default=0.2, ge=0.0, le=2.0)
     size_variance: float = Field(default=0.4, ge=0.0, le=2.0)
-    count_coupling: float = Field(default=0.7, ge=0.0, le=1.0)
-    border_meander: float = Field(default=0.5, ge=0.0, le=1.0)
+    count_coupling: float = Field(default=0.85, ge=0.0, le=1.0)
+    border_meander: float = Field(default=0.8, ge=0.0, le=1.0)
     total_population: int = Field(default=50_000_000, gt=0)
     resolution: int = Field(default=20_000, ge=2_000, le=200_000)
     seed: int = 0

@@ -75,7 +75,7 @@ def test_rejects_unknown_field():
 
 
 def test_border_roughness_per_level():
-    assert WorldSpec(levels=[4, 4]).border_roughness_per_level() == [0.4, 0.4]
+    assert WorldSpec(levels=[4, 4]).border_roughness_per_level() == [0.7, 0.7]
     assert WorldSpec(
         levels=[4, 4], border_roughness=[0.1, 0.9]
     ).border_roughness_per_level() == [0.1, 0.9]
@@ -84,7 +84,7 @@ def test_border_roughness_per_level():
 def test_new_realism_fields_defaults():
     spec = WorldSpec()
     assert spec.size_variance == 0.4
-    assert spec.count_coupling == 0.7
+    assert spec.count_coupling == 0.85
     assert spec.generator_version == "0.4.0"
 
 
@@ -102,7 +102,7 @@ def test_rejects_bad_size_variance_and_coupling():
 
 def test_border_meander_field():
     spec = WorldSpec()
-    assert spec.border_meander == 0.5
+    assert spec.border_meander == 0.8
     assert spec.generator_version == "0.4.0"
     with pytest.raises(ValidationError):
         WorldSpec(border_meander=1.5)
