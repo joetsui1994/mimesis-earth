@@ -6,7 +6,7 @@ const HELP: Record<string, string> = {
   'p-spread':
     'How scattered the landmasses are: 0 clusters them in one region of the globe, 1 spreads them worldwide.',
   'p-coast':
-    'Relief. Mountain amplitude in the terrain: higher values carve ragged coastlines, island arcs, and highlands.',
+    'Mountain amplitude in the terrain — higher values carve ragged coastlines, island arcs, and highlands.',
   'p-borders':
     'Fine-scale wiggliness of internal borders (jitter at the smallest map scale).',
   'p-sizes':
