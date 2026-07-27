@@ -44,6 +44,7 @@ class Unit:
     centroid_lat: float
     geometry: object  # shapely Polygon or MultiPolygon, WGS84 lon/lat
     landmass: Optional[int] = None  # set for level-0 units
+    elevation_m: int = 0  # area-weighted mean elevation, clamped to >= -100
 
 
 @dataclass
@@ -70,6 +71,7 @@ class World:
                 "centroid_lon": round(u.centroid_lon, COORD_DECIMALS),
                 "centroid_lat": round(u.centroid_lat, COORD_DECIMALS),
                 "landmass": u.landmass,
+                "elevation_m": u.elevation_m,
             },
             "geometry": geom,
         }
@@ -98,7 +100,7 @@ class World:
                 [
                     "id", "level", "level_name", "parent_id", "name",
                     "population", "area_km2", "centroid_lon", "centroid_lat",
-                    "landmass",
+                    "landmass", "elevation_m",
                 ]
             )
             for u in sorted(self.units, key=lambda u: (u.level, u.id)):
@@ -109,6 +111,7 @@ class World:
                         round(u.centroid_lon, COORD_DECIMALS),
                         round(u.centroid_lat, COORD_DECIMALS),
                         u.landmass if u.landmass is not None else "",
+                        u.elevation_m,
                     ]
                 )
 
@@ -129,6 +132,7 @@ class World:
                 "centroid_lon": u.centroid_lon,
                 "centroid_lat": u.centroid_lat,
                 "landmass": u.landmass,
+                "elevation_m": u.elevation_m,
             }
             for u in units
         ]

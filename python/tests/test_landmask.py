@@ -70,3 +70,11 @@ def test_deterministic(mesh):
     np.testing.assert_array_equal(m1.land, m2.land)
     np.testing.assert_array_equal(m1.group, m2.group)
     np.testing.assert_array_equal(m1.bridges, m2.bridges)
+
+
+def test_land_is_high_ground(mesh):
+    spec = WorldSpec(levels=[3, 3], n_landmasses=3, resolution=4000)
+    mask = build_landmask(mesh, spec, np.random.default_rng(60))
+    assert mask.elevation.shape == (len(mesh.points),)
+    # land sits above sea: mean land elevation > mean sea elevation
+    assert mask.elevation[mask.land].mean() > mask.elevation[~mask.land].mean() + 0.5

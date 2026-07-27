@@ -6,8 +6,9 @@ import numpy as np
 from scipy.sparse.csgraph import connected_components
 from scipy.spatial import cKDTree
 
+from mimesis_earth.elevation import build_elevation
 from mimesis_earth.mesh import Mesh
-from mimesis_earth.noise import sample_vmf, sphere_noise, unit_vectors
+from mimesis_earth.noise import sample_vmf, unit_vectors
 from mimesis_earth.spec import WorldSpec
 
 
@@ -16,6 +17,7 @@ class LandMask:
     land: np.ndarray  # (n,) bool
     group: np.ndarray  # (n,) int landmass index; -1 for sea
     bridges: np.ndarray  # (b, 2) atom index pairs linking islands within a group
+    elevation: np.ndarray  # (n,) float per-atom elevation used to build this mask
 
 
 def build_landmask(mesh: Mesh, spec: WorldSpec, rng: np.random.Generator) -> LandMask:
@@ -34,11 +36,10 @@ def build_landmask(mesh: Mesh, spec: WorldSpec, rng: np.random.Generator) -> Lan
         kappa = base_kappa * 0.7**attempt
         center = unit_vectors(1, rng)[0]
         seeds = sample_vmf(center, kappa, k, rng)
+        elevation = build_elevation(mesh, seeds, spec, rng)
         angle = np.arccos(np.clip(mesh.points @ seeds.T, -1.0, 1.0))  # (n, K)
         nearest = angle.argmin(axis=1)
-        score = -angle.min(axis=1)
-        score = (score - score.mean()) / score.std()
-        score = score + 1.2 * spec.coast_ruggedness * sphere_noise(mesh.points, rng)
+        score = elevation
         land = np.zeros(n, dtype=bool)
         for s in range(k):
             land[np.argpartition(angle[:, s], per_seed)[:per_seed]] = True
@@ -51,7 +52,7 @@ def build_landmask(mesh: Mesh, spec: WorldSpec, rng: np.random.Generator) -> Lan
         present = np.unique(group[land])
         if len(present) == k:
             bridges = _bridge_islands(mesh, group, k)
-            return LandMask(land=land, group=group, bridges=bridges)
+            return LandMask(land=land, group=group, bridges=bridges, elevation=elevation)
     raise RuntimeError(
         "could not place all landmasses; raise spread, lower n_landmasses, "
         "or raise resolution"
