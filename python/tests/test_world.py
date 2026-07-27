@@ -232,8 +232,8 @@ def test_low_level_units_contiguous():
     specs = [
         WorldSpec(levels=[4, 4, 3], n_landmasses=3, coast_ruggedness=0.8,
                   resolution=8000, seed=21),
-        # archipelago-heavy: actually starves quota (5 quota-starved parents
-        # at seed 7, measured)
+        # archipelago-heavy: actually starves quota (4 quota-starved parents
+        # at seed 7, measured), so the exemption branch below is exercised
         WorldSpec(levels=[6, 2, 2], n_landmasses=6, coast_ruggedness=1.0,
                   spread=1.0, resolution=10000, land_fraction=0.12, seed=7),
     ]
