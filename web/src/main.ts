@@ -1,6 +1,7 @@
 import './style.css'
-import { generateWorld } from './api'
 import type { WorldData } from './api'
+import { ApiSource } from './sources/api'
+import type { WorldSource } from './sources/types'
 import { Globe } from './globe'
 import { hideInspect, showInspect } from './inspect'
 import { downloadWorld } from './exporter'
@@ -8,6 +9,7 @@ import { initParamHelp } from './help'
 import { isTypingInPanel, maybeRandomizeSeed, readSpec } from './panel'
 
 const globe = new Globe(document.getElementById('globe') as HTMLCanvasElement)
+let source: WorldSource = new ApiSource()
 const statusEl = document.getElementById('status')!
 const levelsNav = document.getElementById('levels')!
 
@@ -46,7 +48,7 @@ async function newWorld(): Promise<void> {
     clearTimeout(statusTimer)
     statusEl.hidden = false
     try {
-      world = await generateWorld(readSpec())
+      world = await source.next(readSpec())
       setLevel(Math.min(levelIndex, world.levels.length - 1))
     } catch (err) {
       statusEl.hidden = false
