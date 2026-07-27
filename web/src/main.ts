@@ -15,7 +15,7 @@ const statusEl = document.getElementById('status')!
 const levelsNav = document.getElementById('levels')!
 
 const STATIC = import.meta.env.VITE_DEPLOY_TARGET === 'static'
-const BASE = import.meta.env.BASE_URL // trailing-slash base, subpath-safe
+const BASE = new URL(import.meta.env.BASE_URL, location.href).href // absolute, subpath-safe
 const loadStatus = document.getElementById('load-status')!
 const readyToast = document.getElementById('ready-toast')!
 
