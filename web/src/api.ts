@@ -6,6 +6,8 @@ export interface Spec {
   spread: number
   coast_ruggedness: number
   border_roughness: number
+  size_variance: number
+  count_coupling: number
   total_population: number
   resolution: number
   seed: number
