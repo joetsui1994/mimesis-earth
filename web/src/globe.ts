@@ -6,7 +6,8 @@ const INK = '#2f3a45'
 const SPHERE = '#bcd9ec' // ocean: soft paper-map blue
 const LAND = '#dfe8c9' // land: pale map green (matches the original mockups)
 const GRID = '#9fbfd4'
-const HILITE = 'rgba(214, 185, 140, 0.65)'
+const HILITE = 'rgba(238, 156, 74, 0.55)' // selected unit: warm orange fill
+const HILITE_EDGE = '#e8751a' // selected unit: brighter orange border
 
 export function reverseWinding(fc: FeatureCollection): FeatureCollection {
   const flip = (rings: number[][][]) => rings.map((r) => [...r].reverse())
@@ -85,7 +86,7 @@ export class Globe {
         e.preventDefault()
         this.zoomFactor = Math.min(
           60,
-          Math.max(0.7, this.zoomFactor * Math.exp(-e.deltaY * 0.0015)),
+          Math.max(0.3, this.zoomFactor * Math.exp(-e.deltaY * 0.0015)),
         )
         this.scheduleDraw()
       },
@@ -233,6 +234,14 @@ export class Globe {
       for (const b of this.boundaries) {
         ctx.beginPath()
         path(b)
+        ctx.stroke()
+      }
+      // selected unit gets a brighter orange border on top
+      if (this.selectedIndex >= 0 && this.boundaries[this.selectedIndex]) {
+        ctx.beginPath()
+        path(this.boundaries[this.selectedIndex])
+        ctx.strokeStyle = HILITE_EDGE
+        ctx.lineWidth = 1.6
         ctx.stroke()
       }
     }
