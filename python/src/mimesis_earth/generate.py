@@ -9,7 +9,6 @@ from mimesis_earth.geometry import R_EARTH_KM, atoms_polygon, xyz_to_lonlat
 from mimesis_earth.landmask import build_landmask
 from mimesis_earth.mesh import build_mesh
 from mimesis_earth.naming import make_namer
-from mimesis_earth.noise import sphere_noise
 from mimesis_earth.partition import (
     _island_analysis,
     allocate_counts,
@@ -27,10 +26,19 @@ def generate(spec: WorldSpec, _capture: dict | None = None) -> World:
     rng = np.random.default_rng(spec.seed)
     mesh = build_mesh(spec.resolution, rng)
     mask = build_landmask(mesh, spec, rng)
-    # phantom-terrain cost field: borders settle on its crests (watersheds).
-    # Drawn unconditionally so the rng stream layout is knob-independent.
-    terrain = sphere_noise(mesh.points, rng, octaves=6, base_freq=2.0)
-    atom_cost = np.exp(1.5 * spec.border_meander * terrain)
+    # cost field: borders settle on elevation crests (watersheds), using the
+    # same field that defines land/sea via landmask.py's sea-level quantile.
+    # z-score against land-only elevation stats: atom_cost is only ever read
+    # on land-restricted subgraphs (partition_atoms is always called with a
+    # land/landmass atom subset), so normalizing against the full mesh -
+    # which mixes in the sea's much lower, differently-distributed elevation
+    # - dilutes the std and washes out the contrast among land atoms where
+    # it actually matters.
+    land_elevation = mask.elevation[mask.land]
+    atom_cost = np.exp(
+        1.5 * spec.border_meander
+        * ((mask.elevation - land_elevation.mean()) / land_elevation.std())
+    )
     roughness = spec.border_roughness_per_level()
     n_levels = len(spec.levels)
 
@@ -98,6 +106,7 @@ def generate(spec: WorldSpec, _capture: dict | None = None) -> World:
         _capture["mesh"] = mesh
         _capture["level_nodes"] = level_nodes
         _capture["counts_by_level"] = counts_by_level
+        _capture["elevation"] = mask.elevation
 
     # --- population on leaves --------------------------------------------
     land_idx = np.flatnonzero(mask.land)
@@ -143,6 +152,11 @@ def generate(spec: WorldSpec, _capture: dict | None = None) -> World:
     id_grids: list[list[str]] = [[None] * len(level_nodes[lvl]) for lvl in range(n_levels)]
     child_counter: list[dict] = [dict() for _ in range(n_levels)]
 
+    # per-unit elevation in meters: nominal sea-level contour scaled so the
+    # highest atom lands near 4500m; kernel-forced low atoms clamp to -100m.
+    sea_level = np.quantile(mask.elevation, 1.0 - spec.land_fraction)
+    scale = 4500.0 / max(mask.elevation.max() - sea_level, 1e-9)
+
     widths = []
     for lvl in range(n_levels):
         if lvl == 0:
@@ -171,6 +185,12 @@ def generate(spec: WorldSpec, _capture: dict | None = None) -> World:
             center = (mesh.points[atoms] * weights[:, None]).sum(axis=0)
             center /= np.linalg.norm(center)
             lon, lat = xyz_to_lonlat(center[None, :])
+            weighted_mean_elevation = float(
+                (mask.elevation[atoms] * weights).sum() / weights.sum()
+            )
+            elevation_m = max(
+                -100, int(round(scale * (weighted_mean_elevation - sea_level)))
+            )
             unit_grids[lvl].append(
                 Unit(
                     id=uid,
@@ -184,6 +204,7 @@ def generate(spec: WorldSpec, _capture: dict | None = None) -> World:
                     centroid_lat=float(lat[0]),
                     geometry=_rfc7946(geoms[lvl][i]),
                     landmass=node.get("landmass"),
+                    elevation_m=elevation_m,
                 )
             )
 

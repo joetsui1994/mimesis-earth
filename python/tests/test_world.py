@@ -282,3 +282,33 @@ def test_border_meander_changes_borders_only_when_on():
     j_on = json.dumps(w_on.geojson_dict(1), sort_keys=True)
     assert j_on == json.dumps(w_on2.geojson_dict(1), sort_keys=True)
     assert j_on != json.dumps(w_off.geojson_dict(1), sort_keys=True)
+
+
+def test_elevation_exported_and_coherent(tmp_path):
+    spec = WorldSpec(levels=[4, 3], n_landmasses=2, coast_ruggedness=0.8,
+                     border_meander=1.0, resolution=8000, seed=41)
+    cap: dict = {}
+    world = generate(spec, _capture=cap)
+    for u in world.units:
+        assert isinstance(u.elevation_m, int)
+        assert -100 <= u.elevation_m <= 5000
+    assert max(u.elevation_m for u in world.units_at(1)) > 300
+    out = tmp_path / "elev"
+    world.to_geojson(out)
+    fc = json.loads((out / "level0_country.geojson").read_text())
+    assert all("elevation_m" in f["properties"] for f in fc["features"])
+    world.to_csv(tmp_path / "units.csv")
+    assert "elevation_m" in (tmp_path / "units.csv").read_text().splitlines()[0]
+    # coherence: with meander=1, country borders sit on high ground
+    mesh, nodes = cap["mesh"], cap["level_nodes"]
+    elevation = cap["elevation"]
+    label = np.full(len(mesh.points), -1)
+    for i, node in enumerate(nodes[0]):
+        label[node["atoms"]] = i
+    e = mesh.edges
+    border = (label[e[:, 0]] >= 0) & (label[e[:, 1]] >= 0) & (
+        label[e[:, 0]] != label[e[:, 1]]
+    )
+    border_atoms = np.unique(np.concatenate([e[border, 0], e[border, 1]]))
+    land_atoms = np.flatnonzero(label >= 0)
+    assert elevation[border_atoms].mean() > elevation[land_atoms].mean() + 0.2
