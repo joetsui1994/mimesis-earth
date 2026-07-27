@@ -38,3 +38,19 @@ world.to_csv("out/units.csv")
 - Embed frontend in the package: `./scripts/build_web.sh`
 
 Design docs: `docs/superpowers/specs/`.
+
+## Static / GitHub Pages deploy
+
+The app also runs with **no backend** as a static site: worlds are generated
+client-side by the same Python core compiled to WebAssembly (Pyodide). A
+visitor sees a pre-baked globe instantly; the live generator loads in the
+background and, once ready, spacebar and the sliders produce unlimited worlds
+in the browser.
+
+- Build the static bundle: `./scripts/build_static.sh` → `web/dist`
+  (bundles the frontend, the `mimesis_earth` wheel, and pre-baked gallery
+  worlds; Pyodide + scientific wheels load from the jsdelivr CDN at runtime).
+- Deploy: pushing to `main` publishes `web/dist` to GitHub Pages via
+  `.github/workflows/deploy.yml`.
+- The local `mimesis-earth serve` path is unaffected — it uses the fast
+  server API and never loads Pyodide.
