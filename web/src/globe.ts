@@ -3,9 +3,9 @@ import type { GeoProjection } from 'd3-geo'
 import type { Feature, FeatureCollection, MultiLineString } from 'geojson'
 
 const INK = '#2f3a45'
-const SPHERE = '#f1ecdf'
+const SPHERE = '#bcd9ec' // ocean: soft paper-map blue
 const LAND = '#e5decb'
-const GRID = '#cfc8b6'
+const GRID = '#9fbfd4'
 const HILITE = 'rgba(214, 185, 140, 0.65)'
 
 export function reverseWinding(fc: FeatureCollection): FeatureCollection {
