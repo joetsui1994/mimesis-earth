@@ -13,6 +13,14 @@ import { isTypingInPanel, maybeRandomizeSeed, readSpec, setPanelEnabled } from '
 const globe = new Globe(document.getElementById('globe') as HTMLCanvasElement)
 const statusEl = document.getElementById('status')!
 const levelsNav = document.getElementById('levels')!
+const rotationToggle = document.getElementById('rotation-toggle')!
+let rotationEnabled = true
+
+rotationToggle.addEventListener('click', () => {
+  rotationEnabled = !rotationEnabled
+  globe.setAutoRotation(rotationEnabled)
+  rotationToggle.textContent = rotationEnabled ? 'stop rotation' : 'start rotation'
+})
 
 const STATIC = import.meta.env.VITE_DEPLOY_TARGET === 'static'
 const BASE = new URL(import.meta.env.BASE_URL, location.href).href // absolute, subpath-safe

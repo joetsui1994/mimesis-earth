@@ -1,6 +1,7 @@
 import { geoContains, geoGraticule10, geoOrthographic, geoPath } from 'd3-geo'
 import type { GeoProjection } from 'd3-geo'
 import type { Feature, FeatureCollection, MultiLineString } from 'geojson'
+import { AutoRotation } from './rotation'
 
 const INK = '#2f3a45'
 const SPHERE = '#bcd9ec' // ocean: soft paper-map blue
@@ -71,6 +72,8 @@ export class Globe {
   private height = 0
   private dpr = 1
   private rafPending = false
+  private autoRotation = new AutoRotation()
+  private animationFrame: number | null = null
   private selectedIndex = -1
   selected: Feature | null = null
   onPick: (f: Feature | null) => void = () => {}
@@ -93,6 +96,7 @@ export class Globe {
       { passive: false },
     )
     this.resize()
+    this.requestAutoRotation()
   }
 
   setWorld(fc: FeatureCollection) {
@@ -125,8 +129,13 @@ export class Globe {
   private bindPointer() {
     let dragging = false
     let moved = false
+    let activePointerId: number | null = null
     let last: [number, number] = [0, 0]
     this.canvas.addEventListener('pointerdown', (e) => {
+      if (activePointerId !== null) return
+      activePointerId = e.pointerId
+      this.autoRotation.setInteracting(true)
+      this.cancelAutoRotation()
       dragging = true
       moved = false
       last = [e.clientX, e.clientY]
@@ -134,7 +143,7 @@ export class Globe {
       this.canvas.classList.add('dragging')
     })
     this.canvas.addEventListener('pointermove', (e) => {
-      if (!dragging) return
+      if (!dragging || e.pointerId !== activePointerId) return
       const dx = e.clientX - last[0]
       const dy = e.clientY - last[1]
       if (Math.abs(dx) + Math.abs(dy) > 2) moved = true
@@ -146,11 +155,42 @@ export class Globe {
       ]
       this.scheduleDraw()
     })
-    this.canvas.addEventListener('pointerup', (e) => {
+
+    const finishDrag = (e: PointerEvent, shouldPick: boolean) => {
+      if (!dragging || e.pointerId !== activePointerId) return
       dragging = false
+      activePointerId = null
+      this.autoRotation.setInteracting(false)
+      this.requestAutoRotation()
       this.canvas.classList.remove('dragging')
-      if (!moved) this.pick(e.clientX, e.clientY)
+      if (shouldPick && !moved) this.pick(e.clientX, e.clientY)
+    }
+
+    this.canvas.addEventListener('pointerup', (e) => finishDrag(e, true))
+    this.canvas.addEventListener('pointercancel', (e) => finishDrag(e, false))
+    this.canvas.addEventListener('lostpointercapture', (e) => finishDrag(e, false))
+  }
+
+  setAutoRotation(enabled: boolean): void {
+    this.autoRotation.setEnabled(enabled)
+    if (enabled) this.requestAutoRotation()
+    else this.cancelAutoRotation()
+  }
+
+  private requestAutoRotation(): void {
+    if (!this.autoRotation.active || this.animationFrame !== null) return
+    this.animationFrame = requestAnimationFrame((timestamp) => {
+      this.animationFrame = null
+      this.rotation[0] = this.autoRotation.advance(this.rotation[0], timestamp)
+      this.draw()
+      this.requestAutoRotation()
     })
+  }
+
+  private cancelAutoRotation(): void {
+    if (this.animationFrame === null) return
+    cancelAnimationFrame(this.animationFrame)
+    this.animationFrame = null
   }
 
   private pick(x: number, y: number) {
@@ -191,7 +231,7 @@ export class Globe {
 
   draw() {
     const { ctx } = this
-    const scale = 0.42 * Math.min(this.width, this.height) * this.zoomFactor
+    const scale = 0.3192 * Math.min(this.width, this.height) * this.zoomFactor
     this.projection
       .scale(scale)
       .translate([this.width / 2, this.height / 2])

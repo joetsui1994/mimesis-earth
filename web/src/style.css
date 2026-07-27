@@ -16,8 +16,22 @@ body {
   overflow: hidden;
 }
 
-#globe { display: block; width: 100vw; height: 100vh; cursor: grab; }
+#globe { display: block; width: 100vw; height: 100vh; cursor: grab; touch-action: none; }
 #globe.dragging { cursor: grabbing; }
+
+#rotation-toggle {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  background: var(--card);
+  border: 1px solid var(--ink);
+  padding: 7px 10px;
+  cursor: pointer;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11px;
+  color: var(--ink);
+}
+#rotation-toggle:hover { background: var(--paper); }
 
 #panel {
   position: fixed;
@@ -55,7 +69,7 @@ body {
 
 #inspect {
   position: fixed;
-  top: 24px;
+  top: 68px;
   right: 24px;
   min-width: 200px;
   background: var(--card);
