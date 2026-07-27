@@ -190,6 +190,8 @@ def test_honor_minimums():
 
 
 def test_partition_weighted_sizes():
+    from scipy.sparse.csgraph import connected_components
+
     big = build_mesh(4000, np.random.default_rng(60))
     atom_idx = np.arange(4000)
     cvs = {}
@@ -203,6 +205,10 @@ def test_partition_weighted_sizes():
             sizes = np.array([len(p) for p in parts])
             assert sizes.sum() == 4000
             assert sizes.min() > 0
+            for p in parts:
+                sub = big.adjacency[p][:, p]
+                n_comp, _ = connected_components(sub, directed=False)
+                assert n_comp == 1
             vals.append(sizes.std() / sizes.mean())
         cvs[sv] = float(np.mean(vals))
     assert cvs[0.0] < 0.15
@@ -210,6 +216,8 @@ def test_partition_weighted_sizes():
 
 
 def test_partition_weighted_deterministic(mesh):
+    from scipy.sparse.csgraph import connected_components
+
     atom_idx = np.arange(1500)
     a = partition_atoms(mesh, atom_idx, 5, None, 0.5,
                         np.random.default_rng(64), size_variance=0.7)
@@ -217,3 +225,43 @@ def test_partition_weighted_deterministic(mesh):
                         np.random.default_rng(64), size_variance=0.7)
     for pa, pb in zip(a, b):
         np.testing.assert_array_equal(pa, pb)
+    for p in a:
+        sub = mesh.adjacency[p][:, p]
+        n_comp, _ = connected_components(sub, directed=False)
+        assert n_comp == 1
+
+
+def test_partition_weighted_contiguity_fuzz():
+    # NOTE: deviates from the reviewer's literal atom_idx sampling (uniform
+    # random choice over all 2000 atoms), which produced genuinely
+    # disconnected inputs -- a random subset of a sparse mesh graph fractures
+    # into isolated vertices, so no partitioner could keep every part
+    # contiguous. Per the reviewer's own fallback guidance, atom_idx is
+    # instead a BFS-order prefix from a random start atom: any prefix of a
+    # BFS visiting order is a connected induced subgraph (each newly visited
+    # node is discovered via an edge from an already-visited node), so this
+    # guarantees a connected input while keeping randomized size/shape.
+    from scipy.sparse.csgraph import breadth_first_order, connected_components
+
+    big = build_mesh(2000, np.random.default_rng(65))
+    for sv in (0.4, 1.0):
+        for seed in range(66, 74):
+            rng = np.random.default_rng(seed)
+            n = int(rng.integers(60, 2000))
+            k = int(rng.integers(2, max(3, n // 30)))
+            start = int(np.random.default_rng(seed + 100).integers(2000))
+            order = breadth_first_order(
+                big.adjacency, start, directed=False, return_predecessors=False
+            )
+            atom_idx = np.sort(order[:n])
+            parts = partition_atoms(
+                big, atom_idx, k, None, 0.3, np.random.default_rng(seed + 200),
+                size_variance=sv,
+            )
+            assert sum(len(p) for p in parts) == len(atom_idx)
+            for p in parts:
+                if len(p) < 2:
+                    continue
+                sub = big.adjacency[p][:, p]
+                n_comp, _ = connected_components(sub, directed=False)
+                assert n_comp == 1, (sv, seed, len(p))

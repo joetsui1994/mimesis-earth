@@ -73,13 +73,60 @@ def _subgraph(
 def _assign_labels(adj, seeds, pts, weights):
     dist = np.asarray(dijkstra(adj, directed=False, indices=seeds))
     labels = (dist / weights[:, None]).argmin(axis=0)
-    unreachable = ~np.isfinite(dist.min(axis=0))
-    if unreachable.any():
+    reachable = np.isfinite(dist.min(axis=0))
+    if (~reachable).any():
         chord = np.linalg.norm(
-            pts[unreachable][:, None, :] - pts[seeds][None, :, :], axis=2
+            pts[~reachable][:, None, :] - pts[seeds][None, :, :], axis=2
         )
-        labels[unreachable] = (chord / weights[None, :]).argmin(axis=1)
-    return labels
+        labels[~reachable] = (chord / weights[None, :]).argmin(axis=1)
+    return labels, reachable
+
+
+def _repair_contiguity(adj, seeds, labels, reachable):
+    """Weighted assignment can strand fragments of a part away from its seed
+    (multiplicative Voronoi regions need not be connected). Reattach every
+    stranded fragment to the adjacent part with the largest shared boundary.
+    Genuinely unreachable atoms (disconnected inputs) keep their chord-based
+    assignment untouched."""
+    k = len(seeds)
+    coo = adj.tocoo()
+    while True:
+        frag_ids = np.full(len(labels), -1)
+        frags: list[np.ndarray] = []
+        for i in range(k):
+            members = np.flatnonzero((labels == i) & reachable)
+            if len(members) < 2:
+                continue
+            sub = adj[members][:, members]
+            n_comp, comp = connected_components(sub, directed=False)
+            if n_comp <= 1:
+                continue
+            seed_pos = np.flatnonzero(members == seeds[i])
+            seed_comp = (
+                int(comp[seed_pos[0]])
+                if len(seed_pos)
+                else int(np.bincount(comp).argmax())
+            )
+            for c in range(n_comp):
+                if c == seed_comp:
+                    continue
+                frag = members[comp == c]
+                frag_ids[frag] = len(frags)
+                frags.append(frag)
+        if not frags:
+            return labels
+        moved = False
+        boundary = (frag_ids[coo.row] >= 0) & (frag_ids[coo.col] < 0)
+        votes = np.zeros((len(frags), k))
+        np.add.at(
+            votes, (frag_ids[coo.row][boundary], labels[coo.col][boundary]), 1.0
+        )
+        for fid, frag in enumerate(frags):
+            if votes[fid].sum() > 0:
+                labels[frag] = int(votes[fid].argmax())
+                moved = True
+        if not moved:
+            return labels
 
 
 def partition_atoms(
@@ -119,7 +166,9 @@ def partition_atoms(
     )
 
     pts = mesh.points[atom_idx]
-    labels = _assign_labels(adj, seeds, pts, weights)
+    labels, reachable = _assign_labels(adj, seeds, pts, weights)
+    if size_variance > 0:
+        labels = _repair_contiguity(adj, seeds, labels, reachable)
     # Lloyd-style rebalancing: move each seed to its part's medoid and
     # reassign; evens out part sizes so deep hierarchy levels don't starve
     for _ in range(3):
@@ -157,7 +206,9 @@ def partition_atoms(
         if np.array_equal(np.array(new_seeds), seeds):
             break
         seeds = np.array(new_seeds)
-        labels = _assign_labels(adj, seeds, pts, weights)
+        labels, reachable = _assign_labels(adj, seeds, pts, weights)
+        if size_variance > 0:
+            labels = _repair_contiguity(adj, seeds, labels, reachable)
     return [atom_idx[labels == i] for i in range(k)]
 
 
