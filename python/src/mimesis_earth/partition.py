@@ -38,6 +38,7 @@ def _subgraph(
     extra_edges: Optional[np.ndarray],
     roughness: float,
     rng: np.random.Generator,
+    atom_cost: Optional[np.ndarray] = None,
 ) -> csr_matrix:
     pos = -np.ones(len(mesh.points), dtype=int)
     pos[atom_idx] = np.arange(len(atom_idx))
@@ -47,6 +48,8 @@ def _subgraph(
     w = np.arccos(
         np.clip(np.sum(mesh.points[e[m, 0]] * mesh.points[e[m, 1]], axis=1), -1, 1)
     )
+    if atom_cost is not None:
+        w = w * np.sqrt(atom_cost[e[m, 0]] * atom_cost[e[m, 1]])
     if extra_edges is not None and len(extra_edges) > 0:
         bm = (pos[extra_edges[:, 0]] >= 0) & (pos[extra_edges[:, 1]] >= 0)
         be = extra_edges[bm]
@@ -146,6 +149,7 @@ def partition_atoms(
     roughness: float,
     rng: np.random.Generator,
     size_variance: float = 0.0,
+    atom_cost: Optional[np.ndarray] = None,
 ) -> list[np.ndarray]:
     """Split atom_idx into k non-empty contiguous parts. Returns global index arrays."""
     atom_idx = np.asarray(atom_idx)
@@ -153,7 +157,7 @@ def partition_atoms(
         raise ValueError(f"cannot cut {len(atom_idx)} atoms into {k} parts")
     if k == 1:
         return [atom_idx]
-    adj = _subgraph(mesh, atom_idx, extra_edges, roughness, rng)
+    adj = _subgraph(mesh, atom_idx, extra_edges, roughness, rng, atom_cost)
 
     # seed only on substantial islands: an FPS seed trapped on a tiny islet
     # produces a starved part that Lloyd cannot rescue. roughness=0 means

@@ -311,3 +311,60 @@ def test_partition_weighted_extreme_variance(mesh):
             continue
         n_comp, _ = connected_components(mesh.adjacency[p][:, p], directed=False)
         assert n_comp == 1
+
+
+def test_partition_cost_field_locks_to_crests(mesh):
+    # expensive band around the equator: borders forced to cross it must
+    # settle on its crest (watershed behavior), concentrating border atoms there
+    field = np.where(np.abs(mesh.points[:, 2]) < 0.15, 3.0, 0.0)
+    atom_cost = np.exp(field)
+    atom_idx = np.arange(len(mesh.points))
+
+    def border_mean_cost(parts):
+        label = np.empty(len(mesh.points), dtype=int)
+        for i, p in enumerate(parts):
+            label[p] = i
+        e = mesh.edges
+        border = label[e[:, 0]] != label[e[:, 1]]
+        atoms = np.unique(np.concatenate([e[border, 0], e[border, 1]]))
+        return field[atoms].mean()
+
+    parts_flat = partition_atoms(
+        mesh, atom_idx, 6, None, 0.3, np.random.default_rng(95)
+    )
+    parts_cost = partition_atoms(
+        mesh, atom_idx, 6, None, 0.3, np.random.default_rng(95),
+        atom_cost=atom_cost,
+    )
+    assert sum(len(p) for p in parts_cost) == len(atom_idx)
+    # with the cost field, border atoms concentrate ON the band's crest
+    assert border_mean_cost(parts_cost) > 2.0 * border_mean_cost(parts_flat)
+
+
+def test_partition_cost_field_contiguity_without_repair(mesh):
+    from scipy.sparse.csgraph import connected_components
+
+    # size_variance=0 -> repair pass off; symmetric edge re-weighting must
+    # keep parts contiguous by the shortest-path-tree property
+    rng_field = np.random.default_rng(96)
+    atom_cost = np.exp(1.5 * rng_field.normal(size=len(mesh.points)))
+    for seed in (97, 98, 99):
+        parts = partition_atoms(
+            mesh, np.arange(len(mesh.points)), 7, None, 0.5,
+            np.random.default_rng(seed), atom_cost=atom_cost,
+        )
+        for p in parts:
+            n_comp, _ = connected_components(
+                mesh.adjacency[p][:, p], directed=False
+            )
+            assert n_comp == 1
+
+
+def test_partition_cost_field_deterministic(mesh):
+    atom_cost = np.exp(np.linspace(-1, 1, len(mesh.points)))
+    a = partition_atoms(mesh, np.arange(1000), 4, None, 0.4,
+                        np.random.default_rng(101), atom_cost=atom_cost)
+    b = partition_atoms(mesh, np.arange(1000), 4, None, 0.4,
+                        np.random.default_rng(101), atom_cost=atom_cost)
+    for pa, pb in zip(a, b):
+        np.testing.assert_array_equal(pa, pb)
