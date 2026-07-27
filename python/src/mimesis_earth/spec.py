@@ -5,7 +5,7 @@ from typing import Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-GENERATOR_VERSION = "0.3.0"
+GENERATOR_VERSION = "0.4.0"
 
 _DEFAULT_LEVEL_NAMES = ["country", "province", "district", "ward", "block"]
 
