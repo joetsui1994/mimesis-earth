@@ -36,7 +36,12 @@ export class PyodideSource implements WorldSource {
           }
         }
       }
-      this.worker.onerror = (e) => reject(new Error(e.message))
+      this.worker.onerror = (e) => {
+        const err = new Error(e.message || 'pyodide worker crashed')
+        reject(err) // no-op if whenReady already resolved
+        for (const p of this.pending.values()) p.reject(err)
+        this.pending.clear()
+      }
     })
     this.worker.postMessage({ type: 'init', baseUrl })
   }
