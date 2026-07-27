@@ -197,3 +197,37 @@ def redistribute_counts(counts: np.ndarray, capacities: np.ndarray) -> np.ndarra
         counts[int(headroom.argmax())] += 1
         excess -= 1
     return counts
+
+
+def coupled_counts(
+    total: int,
+    sizes: np.ndarray,
+    coupling: float,
+    variance: float,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Split `total` children among parents. Weights follow each parent's
+    territory share raised to `coupling` (0 = uniform, 1 = proportional),
+    jittered log-normally by `variance`. Total exact, each parent >= 1."""
+    weights = np.asarray(sizes, dtype=float) ** coupling
+    if variance > 0:
+        weights = weights * rng.lognormal(0.0, variance, size=len(weights))
+    return allocate_counts(total, weights)
+
+
+def honor_minimums(counts: np.ndarray, minimums: np.ndarray) -> np.ndarray:
+    """Best-effort: raise counts toward per-parent minimums by borrowing from
+    parents above their own minimum. Preserves the total exactly; never takes
+    a donor below max(1, its minimum). Shortfalls remain when donors run out
+    (callers degrade gracefully via island clustering)."""
+    counts = np.asarray(counts, dtype=int).copy()
+    minimums = np.asarray(minimums, dtype=int)
+    while True:
+        need = minimums - counts
+        needy = np.flatnonzero(need > 0)
+        surplus = counts - np.maximum(minimums, 1)
+        donors = np.flatnonzero(surplus > 0)
+        if len(needy) == 0 or len(donors) == 0:
+            return counts
+        counts[needy[int(np.argmax(need[needy]))]] += 1
+        counts[donors[int(np.argmax(surplus[donors]))]] -= 1

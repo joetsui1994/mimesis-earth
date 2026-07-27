@@ -145,3 +145,45 @@ def test_redistribute_counts():
     np.testing.assert_array_equal(
         redistribute_counts(np.array([2, 2]), np.array([5, 5])), [2, 2]
     )
+
+
+def test_coupled_counts_exact_total_and_min_one():
+    from mimesis_earth.partition import coupled_counts
+
+    sizes = np.array([1000.0, 100.0, 10.0])
+    for variance in (0.0, 0.5, 1.0):
+        out = coupled_counts(30, sizes, 0.7, variance, np.random.default_rng(70))
+        assert out.sum() == 30
+        assert (out >= 1).all()
+
+
+def test_coupled_counts_coupling_behavior():
+    from mimesis_earth.partition import coupled_counts
+
+    sizes = np.array([900.0, 90.0, 10.0])
+    flat = coupled_counts(30, sizes, 0.0, 0.0, np.random.default_rng(71))
+    prop = coupled_counts(30, sizes, 1.0, 0.0, np.random.default_rng(71))
+    assert flat.tolist() == [10, 10, 10]
+    assert prop[0] > 20 and prop[2] == 1
+
+
+def test_coupled_counts_deterministic():
+    from mimesis_earth.partition import coupled_counts
+
+    sizes = np.array([500.0, 300.0, 200.0])
+    a = coupled_counts(24, sizes, 0.7, 0.8, np.random.default_rng(72))
+    b = coupled_counts(24, sizes, 0.7, 0.8, np.random.default_rng(72))
+    np.testing.assert_array_equal(a, b)
+
+
+def test_honor_minimums():
+    from mimesis_earth.partition import honor_minimums
+
+    counts = np.array([1, 8, 1])
+    minimums = np.array([3, 1, 1])
+    out = honor_minimums(counts, minimums)
+    assert out.sum() == 10
+    assert out[0] == 3
+    # shortfall tolerated when donors run dry
+    out2 = honor_minimums(np.array([1, 1]), np.array([5, 5]))
+    assert out2.sum() == 2
