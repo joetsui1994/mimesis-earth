@@ -10,9 +10,9 @@ from mimesis_earth.landmask import build_landmask
 from mimesis_earth.mesh import build_mesh
 from mimesis_earth.naming import make_namer
 from mimesis_earth.partition import (
+    _island_analysis,
     allocate_counts,
     coupled_counts,
-    count_sizeable_islands,
     honor_minimums,
     partition_atoms,
     plan_islands,
@@ -22,7 +22,7 @@ from mimesis_earth.spec import WorldSpec
 from mimesis_earth.world import Unit, World, _rfc7946
 
 
-def generate(spec: WorldSpec) -> World:
+def generate(spec: WorldSpec, _capture: dict | None = None) -> World:
     rng = np.random.default_rng(spec.seed)
     mesh = build_mesh(spec.resolution, rng)
     mask = build_landmask(mesh, spec, rng)
@@ -36,8 +36,9 @@ def generate(spec: WorldSpec) -> World:
     group_sizes = np.array(
         [(mask.group == g).sum() for g in range(spec.n_landmasses)], dtype=float
     )
-    counts0 = allocate_counts(
-        spec.levels[0], group_sizes**spec.count_coupling
+    counts0 = redistribute_counts(
+        allocate_counts(spec.levels[0], group_sizes**spec.count_coupling),
+        group_sizes.astype(int),
     )
     top: list[dict] = []
     for g in range(spec.n_landmasses):
@@ -50,6 +51,7 @@ def generate(spec: WorldSpec) -> World:
             top.append({"atoms": atoms, "parent": None, "landmass": g})
     level_nodes.append(top)
 
+    counts_by_level: list = [None] * n_levels
     for level in range(1, n_levels):
         prev = level_nodes[level - 1]
         parent_sizes = np.array([len(p["atoms"]) for p in prev], dtype=float)
@@ -61,20 +63,23 @@ def generate(spec: WorldSpec) -> World:
         capacities = parent_sizes.astype(int)
         counts = redistribute_counts(counts, capacities)
         # island-rich parents need enough children for one per island where
-        # the level total allows; shortfalls degrade to island clustering
+        # the level total allows; shortfalls degrade to island clustering.
+        # Run the island analysis once per parent and reuse it below for the
+        # actual split, instead of recomputing it inside plan_islands.
+        analyses = [_island_analysis(mesh, p["atoms"], rng) for p in prev]
         minimums = np.array(
-            [
-                min(count_sizeable_islands(mesh, p["atoms"], rng), int(capacities[i]))
-                for i, p in enumerate(prev)
-            ]
+            [min(len(a[3]), int(capacities[i])) for i, a in enumerate(analyses)]
         )
-        assert (minimums >= 1).all() and (minimums <= capacities).all()
         counts = honor_minimums(counts, minimums)
+        assert counts.sum() == level_total
+        assert (counts >= 1).all() and (counts <= capacities).all()
+        counts_by_level[level] = counts
         current: list[dict] = []
         for parent_index, parent in enumerate(prev):
             k = int(counts[parent_index])
             for group_atoms, group_k in plan_islands(
-                mesh, parent["atoms"], k, spec.count_coupling, rng
+                mesh, parent["atoms"], k, spec.count_coupling, rng,
+                analysis=analyses[parent_index],
             ):
                 parts = partition_atoms(
                     mesh, group_atoms, group_k, None, roughness[level], rng,
@@ -83,6 +88,11 @@ def generate(spec: WorldSpec) -> World:
                 for atoms in parts:
                     current.append({"atoms": atoms, "parent": parent_index})
         level_nodes.append(current)
+
+    if _capture is not None:
+        _capture["mesh"] = mesh
+        _capture["level_nodes"] = level_nodes
+        _capture["counts_by_level"] = counts_by_level
 
     # --- population on leaves --------------------------------------------
     land_idx = np.flatnonzero(mask.land)

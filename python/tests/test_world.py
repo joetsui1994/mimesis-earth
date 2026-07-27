@@ -225,53 +225,37 @@ def test_invariants_across_spec_shapes():
 
 
 def test_low_level_units_contiguous():
-    from scipy.sparse import csr_matrix
     from scipy.sparse.csgraph import connected_components
 
-    from mimesis_earth.landmask import build_landmask
-    from mimesis_earth.mesh import build_mesh
-    from mimesis_earth.partition import ISLET_MAX_ATOMS
+    from mimesis_earth.partition import ISLET_MAX_ATOMS, count_sizeable_islands
 
-    # rugged multi-island world with ample quota
-    spec = WorldSpec(
-        levels=[4, 4, 3], n_landmasses=3, coast_ruggedness=0.8,
-        resolution=8000, seed=21,
-    )
-    world = generate(spec)
-    # rebuild the mesh/landmask deterministically to recover atom geometry
-    # (same seed + spec -> identical mesh) and map units to atoms via area:
-    # instead, verify via geometry: for levels >= 1, all polygon parts other
-    # than the largest must be islet-sized
-    atom_area_km2 = 4 * 3.141592653589793 * 6371.0**2 / spec.resolution
-    islet_bound = 2.5 * ISLET_MAX_ATOMS * atom_area_km2
-
-    # a single contiguous landmass that straddles the antimeridian is clipped
-    # (geometry.py) into two MultiPolygon parts that each touch lon = +-180
-    # exactly; naive area-ranking misreads that seam split as a second big
-    # island. Merge seam-touching parts back into one logical part before
-    # ranking so the proxy measures real islands, not clipping artifacts.
-    seam_eps = 1e-6
-
-    def touches_seam(poly):
-        minx, _, maxx, _ = poly.bounds
-        return abs(maxx - 180.0) < seam_eps or abs(minx + 180.0) < seam_eps
-
-    for level in (1, 2):
-        for u in world.units_at(level):
-            if u.geometry.geom_type != "MultiPolygon":
-                continue
-            # planar-degree areas are meaningless; use spherical km2 shares by
-            # ranking parts by area fraction of the unit's own area_km2
-            raw_parts = list(u.geometry.geoms)
-            seam = [p for p in raw_parts if touches_seam(p)]
-            areas = [p.area for p in raw_parts if not touches_seam(p)]
-            if seam:
-                areas.append(sum(p.area for p in seam))
-            areas.sort(reverse=True)
-            total = sum(areas)
-            for extra in areas[1:]:
-                extra_km2 = u.area_km2 * (extra / total)
-                assert extra_km2 < islet_bound, (u.id, extra_km2, islet_bound)
+    specs = [
+        WorldSpec(levels=[4, 4, 3], n_landmasses=3, coast_ruggedness=0.8,
+                  resolution=8000, seed=21),
+        # archipelago-heavy: quota starvation paths exercised
+        WorldSpec(levels=[6, 3, 2], n_landmasses=6, coast_ruggedness=1.0,
+                  spread=0.8, resolution=8000, seed=7),
+    ]
+    for spec in specs:
+        cap: dict = {}
+        generate(spec, _capture=cap)
+        mesh, level_nodes = cap["mesh"], cap["level_nodes"]
+        counts_by_level = cap["counts_by_level"]
+        probe_rng = np.random.default_rng(0)
+        for level in range(1, len(spec.levels)):
+            counts = counts_by_level[level]
+            for node in level_nodes[level]:
+                parent = level_nodes[level - 1][node["parent"]]
+                m = count_sizeable_islands(mesh, parent["atoms"], probe_rng)
+                if m > int(counts[node["parent"]]):
+                    continue  # sanctioned: quota-starved archipelago parent
+                atoms = node["atoms"]
+                sub = mesh.adjacency[atoms][:, atoms]
+                n_comp, comp = connected_components(sub, directed=False)
+                sizes = np.bincount(comp)
+                assert (sizes >= ISLET_MAX_ATOMS).sum() <= 1, (
+                    spec.seed, level, len(atoms), sorted(sizes.tolist()),
+                )
 
 
 def test_exact_totals_at_any_variance_and_coupled_counts_vary():

@@ -5,10 +5,19 @@ from typing import Optional
 import numpy as np
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components, dijkstra
+from scipy.spatial import cKDTree
 
 from mimesis_earth.mesh import Mesh
 
 BRIDGE_COST_FACTOR = 3.0
+
+# Islands at or above this atom count get their own child quota in
+# plan_islands; smaller fragments ("islets") attach to the nearest sizeable
+# island instead of starving the quota. Numerically the same as
+# spec.MIN_ATOMS_PER_LEAF, but the two constants mean different things (that
+# one bounds land-fraction sizing so leaves stay resolvable; this one is the
+# island-attachment threshold) and are not meant to be kept in lockstep.
+ISLET_MAX_ATOMS = 8
 
 
 def pick_seeds(points: np.ndarray, k: int, rng: np.random.Generator) -> np.ndarray:
@@ -281,9 +290,6 @@ def honor_minimums(counts: np.ndarray, minimums: np.ndarray) -> np.ndarray:
         counts[donors[int(np.argmax(surplus[donors]))]] -= 1
 
 
-ISLET_MAX_ATOMS = 8
-
-
 def _island_analysis(mesh: Mesh, atom_idx: np.ndarray, rng: np.random.Generator):
     """Connected components of atom_idx over mesh edges only (no bridges).
     Returns (n_comp, comp_labels, comp_sizes, sizeable_component_ids)."""
@@ -309,45 +315,76 @@ def plan_islands(
     k: int,
     coupling: float,
     rng: np.random.Generator,
+    analysis: Optional[tuple] = None,
 ) -> list[tuple[np.ndarray, int]]:
     """Split a parent's atoms into island groups with per-group child counts
     summing to k. Sizeable islands each host >= 1 child when quota allows;
-    islets attach to the nearest sizeable island. With more sizeable islands
-    than quota, islands are clustered by proximity (each cluster = 1 child)."""
+    islets attach to whichever sizeable island holds their single closest
+    atom (chord distance via cKDTree -- centroid distance can misjudge
+    elongated or crescent islands whose centroid sits far from any
+    coastline). With more sizeable islands than quota, the smaller islands
+    are clustered onto the k largest by the same closest-atom rule (each
+    cluster = 1 child). `analysis`, if given, must be a precomputed
+    `_island_analysis(mesh, atom_idx, rng)` result -- callers that already
+    ran the analysis for quota minimums can pass it through instead of
+    recomputing it here."""
     atom_idx = np.asarray(atom_idx)
-    n_comp, comp, sizes, sizeable = _island_analysis(mesh, atom_idx, rng)
+    if analysis is None:
+        analysis = _island_analysis(mesh, atom_idx, rng)
+    n_comp, comp, sizes, sizeable = analysis
     if n_comp == 1:
         return [(atom_idx, k)]
-    centroids = np.stack(
-        [mesh.points[atom_idx[comp == c]].mean(axis=0) for c in range(n_comp)]
-    )
-    # attach every non-sizeable component to its nearest sizeable island
-    owner = np.empty(n_comp, dtype=int)
-    for c in range(n_comp):
-        if c in set(sizeable.tolist()):
-            owner[c] = c
-        else:
-            d = np.linalg.norm(centroids[sizeable] - centroids[c], axis=1)
-            owner[c] = int(sizeable[int(d.argmin())])
+    pts = mesh.points[atom_idx]
+    sizeable_set = set(sizeable.tolist())
+    owner = np.array([c if c in sizeable_set else -1 for c in range(n_comp)])
+
+    # attach every islet (non-sizeable component) to the sizeable island
+    # holding its closest atom, by chord distance
+    islet_atoms = ~np.isin(comp, sizeable)
+    if islet_atoms.any():
+        sizeable_atoms = ~islet_atoms
+        tree = cKDTree(pts[sizeable_atoms])
+        sizeable_atom_comp = comp[sizeable_atoms]
+        dist, nn = tree.query(pts[islet_atoms])
+        nearest_island = sizeable_atom_comp[nn]
+        islet_comp = comp[islet_atoms]
+        # resolve in ascending-distance order so each islet component picks
+        # up the island reached by its single nearest atom
+        resolved: dict[int, int] = {}
+        for pos in np.argsort(dist):
+            c = int(islet_comp[pos])
+            if c not in resolved:
+                resolved[c] = int(nearest_island[pos])
+        for c, s in resolved.items():
+            owner[c] = s
+
     m = len(sizeable)
     if m <= k:
         group_sizes = np.array(
             [float(sizes[owner == s].sum()) for s in sizeable]
         )
         alloc = allocate_counts(k, group_sizes**coupling)
+        # uniform coupling (coupling=0) can hand a 1-atom island the same
+        # quota as a continent; cap allocation at a soft per-island capacity
+        # first, falling back to the hard atom-count capacity, so tiny
+        # islands don't spawn spammy 1-atom children when a softer split
+        # across the other islands is feasible.
+        soft = np.maximum(1, (group_sizes // ISLET_MAX_ATOMS).astype(int))
+        if soft.sum() >= k:
+            alloc = redistribute_counts(alloc, soft)
         alloc = redistribute_counts(alloc, group_sizes.astype(int))
         groups = list(zip(sizeable.tolist(), alloc.tolist()))
     else:
         order = sizeable[np.argsort(-sizes[sizeable])]
         cluster_seeds = order[:k]
-        seed_set = np.asarray(cluster_seeds)
         cluster_of = {int(s): int(s) for s in cluster_seeds}
+        seed_atoms = np.isin(comp, cluster_seeds)
+        seed_tree = cKDTree(pts[seed_atoms])
+        seed_atom_comp = comp[seed_atoms]
         for c in order[k:]:
-            d = np.linalg.norm(centroids[seed_set] - centroids[int(c)], axis=1)
-            cluster_of[int(c)] = int(seed_set[int(d.argmin())])
-        for c in range(n_comp):
-            owner[c] = cluster_of[int(owner[c])] if int(owner[c]) in cluster_of else int(owner[c])
-        # any owner not itself a cluster seed maps through cluster_of
+            d, nn = seed_tree.query(pts[comp == c])
+            nearest = int(np.argmin(d))
+            cluster_of[int(c)] = int(seed_atom_comp[nn[nearest]])
         owner = np.array([cluster_of.get(int(o), int(o)) for o in owner])
         groups = [(int(s), 1) for s in cluster_seeds]
     out = []
