@@ -56,17 +56,9 @@ def test_ruggedness_scales_relief():
     )
     # relief = residual variance after removing the continent base trend;
     # proxy: local roughness via edge-difference std
+    # local roughness across true mesh neighbors (array-index neighbors are
+    # ~137 degrees apart on a Fibonacci sphere and measure nothing local)
     def edge_std(e):
-        return np.abs(e[:-1] - e[1:]).std()
+        return np.abs(e[mesh.edges[:, 0]] - e[mesh.edges[:, 1]]).std()
 
-    # NOTE: threshold lowered from the plan's 2.0 to 1.4 after investigation.
-    # edge_std as defined here diffs array-index-adjacent atoms, but the
-    # Fibonacci-spiral atom ordering places index-adjacent atoms ~137.5deg
-    # apart in longitude -- not spatial neighbors. Measured against true
-    # mesh adjacency (mesh.edges) the same rough/smooth fields show a
-    # 7x-11x roughness ratio across several seeds, confirming coast_ruggedness
-    # strongly and correctly scales relief; the weak index-based proxy here
-    # only achieves ~1.3x-2.1x depending on seed, landing at 1.517 for this
-    # test's fixed seeds. The implementation is unchanged; only this
-    # proxy-metric's constant was miscalibrated for what it actually measures.
-    assert edge_std(rough) > 1.4 * edge_std(smooth)
+    assert edge_std(rough) > 4.0 * edge_std(smooth)
