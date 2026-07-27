@@ -79,3 +79,22 @@ def test_border_roughness_per_level():
     assert WorldSpec(
         levels=[4, 4], border_roughness=[0.1, 0.9]
     ).border_roughness_per_level() == [0.1, 0.9]
+
+
+def test_new_realism_fields_defaults():
+    spec = WorldSpec()
+    assert spec.size_variance == 0.4
+    assert spec.count_coupling == 0.7
+    assert spec.generator_version == "0.2.0"
+
+
+def test_rejects_bad_size_variance_and_coupling():
+    with pytest.raises(ValidationError):
+        WorldSpec(size_variance=2.5)
+    with pytest.raises(ValidationError):
+        WorldSpec(count_coupling=-0.1)
+    # extreme-but-legal skew is accepted
+    assert WorldSpec(size_variance=2.0).size_variance == 2.0
+    with pytest.raises(ValidationError):
+        WorldSpec(count_variance=2.5)
+    assert WorldSpec(count_variance=2.0).count_variance == 2.0

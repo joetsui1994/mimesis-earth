@@ -22,7 +22,7 @@ draggable globe by pressing the spacebar.
 | Question | Decision |
 |---|---|
 | Coordinates | Real WGS84 lon/lat on the sphere; output loads correctly in any GIS tool |
-| Hierarchy topology | Strictly nested and gapless by construction (children exactly tile parent, no sibling overlaps). Controllable "messiness" is a possible later opt-in, not core |
+| Hierarchy topology | Strictly nested and gapless by construction (children exactly tile parent, no sibling overlaps). Controllable "messiness" is a possible later opt-in, not core. Contiguity below country level follows the [partition-realism addendum](2026-07-27-partition-realism-addendum.md)'s contiguity contract: bridges apply only at level 0 (countries may span islands); deeper units are contiguous except for attached islets and children of quota-starved archipelago parents |
 | Visual/geometry style | Noise-perturbed organic borders and coastlines now ("B"); architecture leaves a slot to evolve to terrain-first elevation-derived land later ("C") |
 | Scale | Medium: 3–4 levels, hundreds to ~12k leaf units (the practical ceiling at the resolution cap of 200k atoms with the 8-atoms-per-leaf validation floor; ~28s generation at that extreme, ~1s at defaults); per-level counts are user parameters |
 | Core language | Python (source of truth). Dependencies restricted to numpy/scipy/shapely/pydantic — all four ship Pyodide wheels (pydantic via pydantic_core), so the core stays Pyodide-compatible; running the same code in-browser is a future experiment, not a requirement |

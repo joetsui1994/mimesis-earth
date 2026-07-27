@@ -5,10 +5,19 @@ from typing import Optional
 import numpy as np
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components, dijkstra
+from scipy.spatial import cKDTree
 
 from mimesis_earth.mesh import Mesh
 
 BRIDGE_COST_FACTOR = 3.0
+
+# Islands at or above this atom count get their own child quota in
+# plan_islands; smaller fragments ("islets") attach to the nearest sizeable
+# island instead of starving the quota. Numerically the same as
+# spec.MIN_ATOMS_PER_LEAF, but the two constants mean different things (that
+# one bounds land-fraction sizing so leaves stay resolvable; this one is the
+# island-attachment threshold) and are not meant to be kept in lockstep.
+ISLET_MAX_ATOMS = 8
 
 
 def pick_seeds(points: np.ndarray, k: int, rng: np.random.Generator) -> np.ndarray:
@@ -70,16 +79,63 @@ def _subgraph(
     )
 
 
-def _assign_labels(adj, seeds, pts):
+def _assign_labels(adj, seeds, pts, weights):
     dist = np.asarray(dijkstra(adj, directed=False, indices=seeds))
-    labels = dist.argmin(axis=0)
-    unreachable = ~np.isfinite(dist.min(axis=0))
-    if unreachable.any():
+    labels = (dist / weights[:, None]).argmin(axis=0)
+    reachable = np.isfinite(dist.min(axis=0))
+    if (~reachable).any():
         chord = np.linalg.norm(
-            pts[unreachable][:, None, :] - pts[seeds][None, :, :], axis=2
+            pts[~reachable][:, None, :] - pts[seeds][None, :, :], axis=2
         )
-        labels[unreachable] = chord.argmin(axis=1)
-    return labels
+        labels[~reachable] = (chord / weights[None, :]).argmin(axis=1)
+    return labels, reachable
+
+
+def _repair_contiguity(adj, seeds, labels, reachable):
+    """Weighted assignment can strand fragments of a part away from its seed
+    (multiplicative Voronoi regions need not be connected). Reattach every
+    stranded fragment to the adjacent part with the largest shared boundary.
+    Genuinely unreachable atoms (disconnected inputs) keep their chord-based
+    assignment untouched."""
+    k = len(seeds)
+    coo = adj.tocoo()
+    while True:
+        frag_ids = np.full(len(labels), -1)
+        frags: list[np.ndarray] = []
+        for i in range(k):
+            members = np.flatnonzero((labels == i) & reachable)
+            if len(members) < 2:
+                continue
+            sub = adj[members][:, members]
+            n_comp, comp = connected_components(sub, directed=False)
+            if n_comp <= 1:
+                continue
+            seed_pos = np.flatnonzero(members == seeds[i])
+            seed_comp = (
+                int(comp[seed_pos[0]])
+                if len(seed_pos)
+                else int(np.bincount(comp).argmax())
+            )
+            for c in range(n_comp):
+                if c == seed_comp:
+                    continue
+                frag = members[comp == c]
+                frag_ids[frag] = len(frags)
+                frags.append(frag)
+        if not frags:
+            return labels
+        moved = False
+        boundary = (frag_ids[coo.row] >= 0) & (frag_ids[coo.col] < 0)
+        votes = np.zeros((len(frags), k))
+        np.add.at(
+            votes, (frag_ids[coo.row][boundary], labels[coo.col][boundary]), 1.0
+        )
+        for fid, frag in enumerate(frags):
+            if votes[fid].sum() > 0:
+                labels[frag] = int(votes[fid].argmax())
+                moved = True
+        if not moved:
+            return labels
 
 
 def partition_atoms(
@@ -89,6 +145,7 @@ def partition_atoms(
     extra_edges: Optional[np.ndarray],
     roughness: float,
     rng: np.random.Generator,
+    size_variance: float = 0.0,
 ) -> list[np.ndarray]:
     """Split atom_idx into k non-empty contiguous parts. Returns global index arrays."""
     atom_idx = np.asarray(atom_idx)
@@ -111,8 +168,16 @@ def partition_atoms(
         candidates = np.arange(len(atom_idx))
     seeds = candidates[pick_seeds(mesh.points[atom_idx[candidates]], k, rng)]
 
+    weights = (
+        rng.lognormal(0.0, size_variance, size=k)
+        if size_variance > 0
+        else np.ones(k)
+    )
+
     pts = mesh.points[atom_idx]
-    labels = _assign_labels(adj, seeds, pts)
+    labels, reachable = _assign_labels(adj, seeds, pts, weights)
+    if size_variance > 0:
+        labels = _repair_contiguity(adj, seeds, labels, reachable)
     # Lloyd-style rebalancing: move each seed to its part's medoid and
     # reassign; evens out part sizes so deep hierarchy levels don't starve
     for _ in range(3):
@@ -129,9 +194,9 @@ def partition_atoms(
         # seed stuck on a tiny islet) can't be rescued by its own medoid;
         # relocate its seed to the farthest atom of the largest part instead
         part_sizes = np.array([int((labels == i).sum()) for i in range(k)])
-        mean_size = part_sizes.mean()
+        expected = len(atom_idx) * weights / weights.sum()
         for i in range(k):
-            if part_sizes[i] < mean_size / 8.0:
+            if part_sizes[i] < max(2.0, expected[i] / 8.0):
                 big = int(part_sizes.argmax())
                 members = np.flatnonzero(labels == big)
                 far = members[
@@ -150,18 +215,10 @@ def partition_atoms(
         if np.array_equal(np.array(new_seeds), seeds):
             break
         seeds = np.array(new_seeds)
-        labels = _assign_labels(adj, seeds, pts)
+        labels, reachable = _assign_labels(adj, seeds, pts, weights)
+        if size_variance > 0:
+            labels = _repair_contiguity(adj, seeds, labels, reachable)
     return [atom_idx[labels == i] for i in range(k)]
-
-
-def child_counts(
-    mean: int, n_parents: int, variance: float, rng: np.random.Generator
-) -> np.ndarray:
-    """How many children each parent gets. variance=0 -> exactly `mean` each."""
-    if variance <= 0:
-        return np.full(n_parents, mean, dtype=int)
-    counts = np.round(rng.normal(mean, variance * mean, n_parents)).astype(int)
-    return np.clip(counts, 1, None)
 
 
 def allocate_counts(total: int, weights: np.ndarray) -> np.ndarray:
@@ -197,3 +254,141 @@ def redistribute_counts(counts: np.ndarray, capacities: np.ndarray) -> np.ndarra
         counts[int(headroom.argmax())] += 1
         excess -= 1
     return counts
+
+
+def coupled_counts(
+    total: int,
+    sizes: np.ndarray,
+    coupling: float,
+    variance: float,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Split `total` children among parents. Weights follow each parent's
+    territory share raised to `coupling` (0 = uniform, 1 = proportional),
+    jittered log-normally by `variance`. Total exact, each parent >= 1."""
+    weights = np.asarray(sizes, dtype=float) ** coupling
+    if variance > 0:
+        weights = weights * rng.lognormal(0.0, variance, size=len(weights))
+    return allocate_counts(total, weights)
+
+
+def honor_minimums(counts: np.ndarray, minimums: np.ndarray) -> np.ndarray:
+    """Best-effort: raise counts toward per-parent minimums by borrowing from
+    parents above their own minimum. Preserves the total exactly; never takes
+    a donor below max(1, its minimum). Shortfalls remain when donors run out
+    (callers degrade gracefully via island clustering)."""
+    counts = np.asarray(counts, dtype=int).copy()
+    minimums = np.asarray(minimums, dtype=int)
+    while True:
+        need = minimums - counts
+        needy = np.flatnonzero(need > 0)
+        surplus = counts - np.maximum(minimums, 1)
+        donors = np.flatnonzero(surplus > 0)
+        if len(needy) == 0 or len(donors) == 0:
+            return counts
+        counts[needy[int(np.argmax(need[needy]))]] += 1
+        counts[donors[int(np.argmax(surplus[donors]))]] -= 1
+
+
+def _island_analysis(mesh: Mesh, atom_idx: np.ndarray, rng: np.random.Generator):
+    """Connected components of atom_idx over mesh edges only (no bridges).
+    Returns (n_comp, comp_labels, comp_sizes, sizeable_component_ids)."""
+    sub = _subgraph(mesh, atom_idx, None, 0.0, rng)  # roughness 0: no rng draws
+    n_comp, comp = connected_components(sub, directed=False)
+    sizes = np.bincount(comp)
+    sizeable = np.flatnonzero(sizes >= ISLET_MAX_ATOMS)
+    if len(sizeable) == 0:
+        sizeable = np.array([int(sizes.argmax())])
+    return n_comp, comp, sizes, sizeable
+
+
+def count_sizeable_islands(
+    mesh: Mesh, atom_idx: np.ndarray, rng: np.random.Generator
+) -> int:
+    _, _, _, sizeable = _island_analysis(mesh, np.asarray(atom_idx), rng)
+    return len(sizeable)
+
+
+def plan_islands(
+    mesh: Mesh,
+    atom_idx: np.ndarray,
+    k: int,
+    coupling: float,
+    rng: np.random.Generator,
+    analysis: Optional[tuple] = None,
+) -> list[tuple[np.ndarray, int]]:
+    """Split a parent's atoms into island groups with per-group child counts
+    summing to k. Sizeable islands each host >= 1 child when quota allows;
+    islets attach to whichever sizeable island holds their single closest
+    atom (chord distance via cKDTree -- centroid distance can misjudge
+    elongated or crescent islands whose centroid sits far from any
+    coastline). With more sizeable islands than quota, the smaller islands
+    are clustered onto the k largest by the same closest-atom rule (each
+    cluster = 1 child). `analysis`, if given, must be a precomputed
+    `_island_analysis(mesh, atom_idx, rng)` result -- callers that already
+    ran the analysis for quota minimums can pass it through instead of
+    recomputing it here."""
+    atom_idx = np.asarray(atom_idx)
+    if analysis is None:
+        analysis = _island_analysis(mesh, atom_idx, rng)
+    n_comp, comp, sizes, sizeable = analysis
+    if n_comp == 1:
+        return [(atom_idx, k)]
+    pts = mesh.points[atom_idx]
+    sizeable_set = set(sizeable.tolist())
+    owner = np.array([c if c in sizeable_set else -1 for c in range(n_comp)])
+
+    # attach every islet (non-sizeable component) to the sizeable island
+    # holding its closest atom, by chord distance
+    islet_atoms = ~np.isin(comp, sizeable)
+    if islet_atoms.any():
+        sizeable_atoms = ~islet_atoms
+        tree = cKDTree(pts[sizeable_atoms])
+        sizeable_atom_comp = comp[sizeable_atoms]
+        dist, nn = tree.query(pts[islet_atoms])
+        nearest_island = sizeable_atom_comp[nn]
+        islet_comp = comp[islet_atoms]
+        # resolve in ascending-distance order so each islet component picks
+        # up the island reached by its single nearest atom
+        resolved: dict[int, int] = {}
+        for pos in np.argsort(dist):
+            c = int(islet_comp[pos])
+            if c not in resolved:
+                resolved[c] = int(nearest_island[pos])
+        for c, s in resolved.items():
+            owner[c] = s
+
+    m = len(sizeable)
+    if m <= k:
+        group_sizes = np.array(
+            [float(sizes[owner == s].sum()) for s in sizeable]
+        )
+        alloc = allocate_counts(k, group_sizes**coupling)
+        # uniform coupling (coupling=0) can hand a 1-atom island the same
+        # quota as a continent; cap allocation at a soft per-island capacity
+        # first, falling back to the hard atom-count capacity, so tiny
+        # islands don't spawn spammy 1-atom children when a softer split
+        # across the other islands is feasible.
+        soft = np.maximum(1, (group_sizes // ISLET_MAX_ATOMS).astype(int))
+        if soft.sum() >= k:
+            alloc = redistribute_counts(alloc, soft)
+        alloc = redistribute_counts(alloc, group_sizes.astype(int))
+        groups = list(zip(sizeable.tolist(), alloc.tolist()))
+    else:
+        order = sizeable[np.argsort(-sizes[sizeable])]
+        cluster_seeds = order[:k]
+        cluster_of = {int(s): int(s) for s in cluster_seeds}
+        seed_atoms = np.isin(comp, cluster_seeds)
+        seed_tree = cKDTree(pts[seed_atoms])
+        seed_atom_comp = comp[seed_atoms]
+        for c in order[k:]:
+            d, nn = seed_tree.query(pts[comp == c])
+            nearest = int(np.argmin(d))
+            cluster_of[int(c)] = int(seed_atom_comp[nn[nearest]])
+        owner = np.array([cluster_of.get(int(o), int(o)) for o in owner])
+        groups = [(int(s), 1) for s in cluster_seeds]
+    out = []
+    for s, count in groups:
+        members = atom_idx[owner[comp] == s]
+        out.append((members, int(count)))
+    return out

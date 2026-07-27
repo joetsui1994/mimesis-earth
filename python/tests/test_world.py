@@ -222,3 +222,53 @@ def test_invariants_across_spec_shapes():
         leaves = w.units_at(len(spec.levels) - 1)
         assert sum(u.population for u in leaves) == spec.total_population
         assert len({u.landmass for u in w.units_at(0)}) == spec.n_landmasses
+
+
+def test_low_level_units_contiguous():
+    from scipy.sparse.csgraph import connected_components
+
+    from mimesis_earth.partition import ISLET_MAX_ATOMS, count_sizeable_islands
+
+    specs = [
+        WorldSpec(levels=[4, 4, 3], n_landmasses=3, coast_ruggedness=0.8,
+                  resolution=8000, seed=21),
+        # archipelago-heavy: actually starves quota (4 quota-starved parents
+        # at seed 7, measured), so the exemption branch below is exercised
+        WorldSpec(levels=[6, 2, 2], n_landmasses=6, coast_ruggedness=1.0,
+                  spread=1.0, resolution=10000, land_fraction=0.12, seed=7),
+    ]
+    for spec in specs:
+        cap: dict = {}
+        generate(spec, _capture=cap)
+        mesh, level_nodes = cap["mesh"], cap["level_nodes"]
+        counts_by_level = cap["counts_by_level"]
+        probe_rng = np.random.default_rng(0)
+        for level in range(1, len(spec.levels)):
+            counts = counts_by_level[level]
+            for node in level_nodes[level]:
+                parent = level_nodes[level - 1][node["parent"]]
+                m = count_sizeable_islands(mesh, parent["atoms"], probe_rng)
+                if m > int(counts[node["parent"]]):
+                    continue  # sanctioned: quota-starved archipelago parent
+                atoms = node["atoms"]
+                sub = mesh.adjacency[atoms][:, atoms]
+                n_comp, comp = connected_components(sub, directed=False)
+                sizes = np.bincount(comp)
+                assert (sizes >= ISLET_MAX_ATOMS).sum() <= 1, (
+                    spec.seed, level, len(atoms), sorted(sizes.tolist()),
+                )
+
+
+def test_exact_totals_at_any_variance_and_coupled_counts_vary():
+    spec = WorldSpec(
+        levels=[5, 4, 4], count_variance=0.8, count_coupling=1.0,
+        resolution=8000, seed=23,
+    )
+    world = generate(spec)
+    assert len(world.units_at(0)) == 5
+    assert len(world.units_at(1)) == 20
+    assert len(world.units_at(2)) == 80
+    per_parent: dict = {}
+    for u in world.units_at(1):
+        per_parent[u.parent_id] = per_parent.get(u.parent_id, 0) + 1
+    assert len(set(per_parent.values())) > 1

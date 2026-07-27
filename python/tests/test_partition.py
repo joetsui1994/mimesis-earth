@@ -4,7 +4,6 @@ import pytest
 from mimesis_earth.mesh import build_mesh
 from mimesis_earth.partition import (
     allocate_counts,
-    child_counts,
     partition_atoms,
     pick_seeds,
 )
@@ -54,17 +53,6 @@ def test_partition_deterministic(mesh):
     b = partition_atoms(mesh, atom_idx, 4, None, 0.5, np.random.default_rng(24))
     for pa, pb in zip(a, b):
         np.testing.assert_array_equal(pa, pb)
-
-
-def test_child_counts_exact_when_variance_zero():
-    counts = child_counts(6, 10, 0.0, np.random.default_rng(25))
-    assert (counts == 6).all()
-
-
-def test_child_counts_varies_and_positive():
-    counts = child_counts(6, 200, 0.5, np.random.default_rng(26))
-    assert counts.min() >= 1
-    assert counts.std() > 0
 
 
 def test_allocate_counts():
@@ -145,3 +133,181 @@ def test_redistribute_counts():
     np.testing.assert_array_equal(
         redistribute_counts(np.array([2, 2]), np.array([5, 5])), [2, 2]
     )
+
+
+def test_coupled_counts_exact_total_and_min_one():
+    from mimesis_earth.partition import coupled_counts
+
+    sizes = np.array([1000.0, 100.0, 10.0])
+    for variance in (0.0, 0.5, 1.0, 2.0):
+        out = coupled_counts(30, sizes, 0.7, variance, np.random.default_rng(70))
+        assert out.sum() == 30
+        assert (out >= 1).all()
+
+
+def test_coupled_counts_coupling_behavior():
+    from mimesis_earth.partition import coupled_counts
+
+    sizes = np.array([900.0, 90.0, 10.0])
+    flat = coupled_counts(30, sizes, 0.0, 0.0, np.random.default_rng(71))
+    prop = coupled_counts(30, sizes, 1.0, 0.0, np.random.default_rng(71))
+    assert flat.tolist() == [10, 10, 10]
+    assert prop[0] > 20 and prop[2] == 1
+
+
+def test_coupled_counts_deterministic():
+    from mimesis_earth.partition import coupled_counts
+
+    sizes = np.array([500.0, 300.0, 200.0])
+    a = coupled_counts(24, sizes, 0.7, 0.8, np.random.default_rng(72))
+    b = coupled_counts(24, sizes, 0.7, 0.8, np.random.default_rng(72))
+    np.testing.assert_array_equal(a, b)
+
+
+def test_honor_minimums():
+    from mimesis_earth.partition import honor_minimums
+
+    counts = np.array([1, 8, 1])
+    minimums = np.array([3, 1, 1])
+    out = honor_minimums(counts, minimums)
+    assert out.sum() == 10
+    assert out[0] == 3
+    # shortfall tolerated when donors run dry
+    out2 = honor_minimums(np.array([1, 1]), np.array([5, 5]))
+    assert out2.sum() == 2
+
+
+def test_partition_weighted_sizes():
+    from scipy.sparse.csgraph import connected_components
+
+    big = build_mesh(4000, np.random.default_rng(60))
+    atom_idx = np.arange(4000)
+    cvs = {}
+    for sv in (0.0, 0.8):
+        vals = []
+        for seed in (61, 62, 63):
+            parts = partition_atoms(
+                big, atom_idx, 8, None, 0.4, np.random.default_rng(seed),
+                size_variance=sv,
+            )
+            sizes = np.array([len(p) for p in parts])
+            assert sizes.sum() == 4000
+            assert sizes.min() > 0
+            for p in parts:
+                sub = big.adjacency[p][:, p]
+                n_comp, _ = connected_components(sub, directed=False)
+                assert n_comp == 1
+            vals.append(sizes.std() / sizes.mean())
+        cvs[sv] = float(np.mean(vals))
+    assert cvs[0.0] < 0.15
+    assert cvs[0.8] > 0.3
+
+
+def test_partition_weighted_deterministic(mesh):
+    from scipy.sparse.csgraph import connected_components
+
+    atom_idx = np.arange(1500)
+    a = partition_atoms(mesh, atom_idx, 5, None, 0.5,
+                        np.random.default_rng(64), size_variance=0.7)
+    b = partition_atoms(mesh, atom_idx, 5, None, 0.5,
+                        np.random.default_rng(64), size_variance=0.7)
+    for pa, pb in zip(a, b):
+        np.testing.assert_array_equal(pa, pb)
+    for p in a:
+        sub = mesh.adjacency[p][:, p]
+        n_comp, _ = connected_components(sub, directed=False)
+        assert n_comp == 1
+
+
+def test_partition_weighted_contiguity_fuzz():
+    # NOTE: deviates from the reviewer's literal atom_idx sampling (uniform
+    # random choice over all 2000 atoms), which produced genuinely
+    # disconnected inputs -- a random subset of a sparse mesh graph fractures
+    # into isolated vertices, so no partitioner could keep every part
+    # contiguous. Per the reviewer's own fallback guidance, atom_idx is
+    # instead a BFS-order prefix from a random start atom: any prefix of a
+    # BFS visiting order is a connected induced subgraph (each newly visited
+    # node is discovered via an edge from an already-visited node), so this
+    # guarantees a connected input while keeping randomized size/shape.
+    from scipy.sparse.csgraph import breadth_first_order, connected_components
+
+    big = build_mesh(2000, np.random.default_rng(65))
+    for sv in (0.4, 1.0):
+        for seed in range(66, 74):
+            rng = np.random.default_rng(seed)
+            n = int(rng.integers(60, 2000))
+            k = int(rng.integers(2, max(3, n // 30)))
+            start = int(np.random.default_rng(seed + 100).integers(2000))
+            order = breadth_first_order(
+                big.adjacency, start, directed=False, return_predecessors=False
+            )
+            atom_idx = np.sort(order[:n])
+            parts = partition_atoms(
+                big, atom_idx, k, None, 0.3, np.random.default_rng(seed + 200),
+                size_variance=sv,
+            )
+            assert sum(len(p) for p in parts) == len(atom_idx)
+            for p in parts:
+                if len(p) < 2:
+                    continue
+                sub = big.adjacency[p][:, p]
+                n_comp, _ = connected_components(sub, directed=False)
+                assert n_comp == 1, (sv, seed, len(p))
+
+
+def test_plan_islands_single_component(mesh):
+    from mimesis_earth.partition import plan_islands
+
+    plans = plan_islands(mesh, np.arange(2000), 5, 0.7, np.random.default_rng(80))
+    assert len(plans) == 1
+    atoms, k = plans[0]
+    assert k == 5 and len(atoms) == 2000
+
+
+def test_plan_islands_allocates_per_island(mesh):
+    from mimesis_earth.partition import plan_islands
+
+    z = mesh.points[:, 2]
+    north = np.flatnonzero(z > 0.88)
+    south = np.flatnonzero(z < -0.88)
+    atom_idx = np.concatenate([north, south])
+    plans = plan_islands(mesh, atom_idx, 6, 0.7, np.random.default_rng(81))
+    assert len(plans) == 2
+    ks = sorted(k for _, k in plans)
+    assert sum(ks) == 6 and ks[0] >= 1
+    covered = np.sort(np.concatenate([a for a, _ in plans]))
+    np.testing.assert_array_equal(covered, np.sort(atom_idx))
+
+
+def test_plan_islands_clusters_when_quota_short(mesh):
+    from mimesis_earth.partition import plan_islands
+
+    z = mesh.points[:, 2]
+    bands = [
+        np.flatnonzero(z > 0.9),
+        np.flatnonzero((z > 0.4) & (z < 0.6)),
+        np.flatnonzero((z > -0.6) & (z < -0.4)),
+        np.flatnonzero(z < -0.9),
+    ]
+    atom_idx = np.concatenate(bands)
+    plans = plan_islands(mesh, atom_idx, 2, 0.7, np.random.default_rng(82))
+    assert len(plans) == 2
+    assert all(k == 1 for _, k in plans)
+    covered = np.sort(np.concatenate([a for a, _ in plans]))
+    np.testing.assert_array_equal(covered, np.sort(atom_idx))
+
+
+def test_partition_weighted_extreme_variance(mesh):
+    from scipy.sparse.csgraph import connected_components
+
+    parts = partition_atoms(
+        mesh, np.arange(2000), 8, None, 0.4, np.random.default_rng(90),
+        size_variance=2.0,
+    )
+    assert sum(len(p) for p in parts) == 2000
+    assert all(len(p) > 0 for p in parts)
+    for p in parts:
+        if len(p) < 2:
+            continue
+        n_comp, _ = connected_components(mesh.adjacency[p][:, p], directed=False)
+        assert n_comp == 1
