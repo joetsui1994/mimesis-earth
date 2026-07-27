@@ -83,6 +83,10 @@ def test_earth_radius_constant():
 
 
 def test_snap_union_matches_and_snaps_inputs():
+    """snap_union general-behavior smoke test. Note: the specific defect this
+    guards against (Pyodide/WASM GEOS 3.12 fatally erroring on near-pole ring
+    unions) cannot be reproduced on native GEOS; that guarantee rests on the
+    manual cross-GEOS byte-identical spike check recorded in the addendum."""
     from mimesis_earth.geometry import PRECISION_GRID, snap_union
     import shapely
     from shapely.geometry import box
