@@ -35,3 +35,8 @@ export function isTypingInPanel(target: EventTarget | null): boolean {
     (target.type === 'text' || target.type === 'number')
   )
 }
+
+export function setPanelEnabled(enabled: boolean): void {
+  const panel = document.getElementById('panel')!
+  panel.classList.toggle('dimmed', !enabled)
+}

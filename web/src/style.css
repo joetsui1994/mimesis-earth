@@ -107,3 +107,33 @@ body {
   color: var(--dim);
   line-height: 1.5;
 }
+
+#load-status {
+  position: fixed;
+  top: 24px;
+  left: 234px;
+  max-width: 320px;
+  font-size: 13px;
+  color: var(--dim);
+  font-style: italic;
+}
+#panel.dimmed { opacity: 0.5; pointer-events: none; }
+#panel.dimmed .panel-title::after { content: ' (loading…)'; }
+#ready-toast {
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--card);
+  border: 1px solid var(--ink);
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--ink);
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+#ready-toast button {
+  background: none; border: none; cursor: pointer;
+  font-size: 16px; color: var(--dim); line-height: 1;
+}
