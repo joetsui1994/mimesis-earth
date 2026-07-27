@@ -44,8 +44,9 @@ Run `cd python && ../.venv/bin/pytest tests/test_spec.py -v` → new test FAILS.
 - [ ] **Step 1: Failing tests** — append to test_partition.py:
 
 ```python
-def test_partition_cost_field_channels_borders(mesh):
-    # expensive band around the equator: borders should avoid it
+def test_partition_cost_field_locks_to_crests(mesh):
+    # expensive band around the equator: borders forced to cross it must
+    # settle on its crest (watershed behavior), concentrating border atoms there
     field = np.where(np.abs(mesh.points[:, 2]) < 0.15, 3.0, 0.0)
     atom_cost = np.exp(field)
     atom_idx = np.arange(len(mesh.points))
@@ -67,8 +68,8 @@ def test_partition_cost_field_channels_borders(mesh):
         atom_cost=atom_cost,
     )
     assert sum(len(p) for p in parts_cost) == len(atom_idx)
-    # with the expensive band, border atoms sit in cheap terrain far more often
-    assert border_mean_cost(parts_cost) < 0.5 * border_mean_cost(parts_flat)
+    # with the cost field, border atoms concentrate ON the band's crest
+    assert border_mean_cost(parts_cost) > 2.0 * border_mean_cost(parts_flat)
 
 
 def test_partition_cost_field_contiguity_without_repair(mesh):
@@ -142,7 +143,7 @@ Run → FAILS (meander not wired; on/off worlds identical).
   - Immediately after `mask = build_landmask(...)` add (unconditional draw — stream layout must not depend on the knob):
 
 ```python
-    # phantom-terrain cost field: borders meander along its valleys.
+    # phantom-terrain cost field: borders settle on its crests (watersheds).
     # Drawn unconditionally so the rng stream layout is knob-independent.
     terrain = sphere_noise(mesh.points, rng, octaves=6, base_freq=2.0)
     atom_cost = np.exp(1.5 * spec.border_meander * terrain)
@@ -160,4 +161,4 @@ Run → FAILS (meander not wired; on/off worlds identical).
 
 - Addendum coverage: field+version (T1), cost plumbing with land-only/bridge-exempt semantics (T2), per-world field + all-level wiring + unconditional draw (T3), panel (T3). Contiguity-without-repair proof pinned by a dedicated test (T2).
 - Type consistency: `partition_atoms(..., atom_cost=None)` keyword used by generate() T3 and tests T2; `_subgraph(..., atom_cost=None)` internal only.
-- Sharp edges flagged inline: global-index indexing of atom_cost inside `_subgraph`; the channeling test's 0.5-ratio threshold is generous (expensive band cost e^3≈20x) but if it flakes, investigate rather than loosen.
+- Sharp edges flagged inline: global-index indexing of atom_cost inside `_subgraph`; the crest-locking test's 2.0-ratio threshold is conservative (measured ~4.6x) but if it flakes, investigate rather than loosen.

@@ -85,7 +85,7 @@ def test_new_realism_fields_defaults():
     spec = WorldSpec()
     assert spec.size_variance == 0.4
     assert spec.count_coupling == 0.7
-    assert spec.generator_version == "0.2.0"
+    assert spec.generator_version == "0.3.0"
 
 
 def test_rejects_bad_size_variance_and_coupling():
@@ -98,3 +98,12 @@ def test_rejects_bad_size_variance_and_coupling():
     with pytest.raises(ValidationError):
         WorldSpec(count_variance=2.5)
     assert WorldSpec(count_variance=2.0).count_variance == 2.0
+
+
+def test_border_meander_field():
+    spec = WorldSpec()
+    assert spec.border_meander == 0.5
+    assert spec.generator_version == "0.3.0"
+    with pytest.raises(ValidationError):
+        WorldSpec(border_meander=1.5)
+    assert WorldSpec(border_meander=0.0).border_meander == 0.0

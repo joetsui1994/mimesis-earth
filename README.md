@@ -22,7 +22,8 @@ polygon to inspect. The top-left panel sets parameters for the next world.
 from mimesis_earth import WorldSpec, generate
 
 world = generate(WorldSpec(
-    levels=[8, 6, 9], n_landmasses=4, size_variance=0.4, count_coupling=0.7, seed=42,
+    levels=[8, 6, 9], n_landmasses=4, size_variance=0.4, count_coupling=0.7,
+    border_meander=0.5, seed=42,
 ))
 world.gdf(level=2)          # geopandas GeoDataFrame of districts
 world.to_geojson("out/")    # one FeatureCollection per level + spec.json

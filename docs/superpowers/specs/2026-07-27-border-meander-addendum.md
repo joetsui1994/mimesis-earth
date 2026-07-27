@@ -34,8 +34,14 @@ to the straight baseline. Real borders follow spatially *correlated* features
   terrain logic as country borders). NOT applied to bridge edges (they
   represent sea crossings) and not used by `_island_analysis` (connectivity
   only). `None` skips everything (direct callers/tests unaffected).
-- Growth frontiers then follow valleys of the field → borders meander at all
-  wavelengths. The existing `border_roughness` jitter stays as the
+- Growth frontiers then settle on the **crests** of the field — the loci of
+  maximum crossing cost, i.e. watershed lines of the phantom terrain. (Proven
+  during implementation, analytically and empirically: for any band-like
+  expensive region a competitive-growth border must cross, the equal-cost
+  frontier collapses onto the band's centerline. This mirrors reality:
+  mountain borders run along ridge crests, river borders sit on the river.)
+  Crest lines of a smooth random field meander at all wavelengths, which is
+  the visual goal. The existing `border_roughness` jitter stays as the
   fine-scale component.
 
 ## Guarantees (unchanged, with proof sketch)
@@ -57,8 +63,9 @@ One new panel row: `meander` (range 0–1, step 0.05, default 0.5).
 ## Testing
 
 - Spec: field default/bounds; version 0.3.0.
-- Partition-level: with a synthetic high-cost band, borders preferentially
-  avoid expensive atoms (mean field value on border atoms < global mean);
+- Partition-level: with a synthetic high-cost band, borders lock onto the
+  band's crest (mean field value on border atoms substantially higher with
+  the cost field than without);
   contiguity fuzz at meander-equivalent cost fields with size_variance=0
   (repair off — proves the proof); determinism.
 - World-level: existing invariant suite passes under new defaults;

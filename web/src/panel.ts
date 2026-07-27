@@ -16,6 +16,7 @@ export function readSpec(): Spec {
     size_variance: parseFloat($('p-sizes').value),
     count_coupling: parseFloat($('p-coupling').value),
     count_variance: parseFloat($('p-counts').value),
+    border_meander: parseFloat($('p-meander').value),
     total_population: parseInt($('p-pop').value, 10) || 50_000_000,
     resolution: parseInt($('p-res').value, 10) || 20_000,
     seed: parseInt($('p-seed').value, 10) || 0,

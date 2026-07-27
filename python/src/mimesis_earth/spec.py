@@ -5,7 +5,7 @@ from typing import Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-GENERATOR_VERSION = "0.2.0"
+GENERATOR_VERSION = "0.3.0"
 
 _DEFAULT_LEVEL_NAMES = ["country", "province", "district", "ward", "block"]
 
@@ -26,6 +26,7 @@ class WorldSpec(BaseModel):
     count_variance: float = Field(default=0.2, ge=0.0, le=2.0)
     size_variance: float = Field(default=0.4, ge=0.0, le=2.0)
     count_coupling: float = Field(default=0.7, ge=0.0, le=1.0)
+    border_meander: float = Field(default=0.5, ge=0.0, le=1.0)
     total_population: int = Field(default=50_000_000, gt=0)
     resolution: int = Field(default=20_000, ge=2_000, le=200_000)
     seed: int = 0
