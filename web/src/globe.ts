@@ -4,7 +4,7 @@ import type { Feature, FeatureCollection, MultiLineString } from 'geojson'
 
 const INK = '#2f3a45'
 const SPHERE = '#bcd9ec' // ocean: soft paper-map blue
-const LAND = '#e5decb'
+const LAND = '#dfe8c9' // land: pale map green (matches the original mockups)
 const GRID = '#9fbfd4'
 const HILITE = 'rgba(214, 185, 140, 0.65)'
 
