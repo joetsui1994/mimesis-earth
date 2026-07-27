@@ -97,3 +97,13 @@ body {
   color: var(--dim);
   font-size: 13px;
 }
+
+#param-help {
+  position: fixed;
+  top: 24px;
+  left: 234px;
+  max-width: 320px;
+  font-size: 13px;
+  color: var(--dim);
+  line-height: 1.5;
+}

@@ -4,6 +4,7 @@ import type { WorldData } from './api'
 import { Globe } from './globe'
 import { hideInspect, showInspect } from './inspect'
 import { downloadWorld } from './exporter'
+import { initParamHelp } from './help'
 import { isTypingInPanel, maybeRandomizeSeed, readSpec } from './panel'
 
 const globe = new Globe(document.getElementById('globe') as HTMLCanvasElement)
@@ -74,4 +75,5 @@ document.getElementById('export')!.addEventListener('click', () => {
   if (world) downloadWorld(world)
 })
 
+initParamHelp()
 void newWorld()
