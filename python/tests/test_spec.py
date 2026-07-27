@@ -90,6 +90,8 @@ def test_new_realism_fields_defaults():
 
 def test_rejects_bad_size_variance_and_coupling():
     with pytest.raises(ValidationError):
-        WorldSpec(size_variance=1.5)
+        WorldSpec(size_variance=2.5)
     with pytest.raises(ValidationError):
         WorldSpec(count_coupling=-0.1)
+    # extreme-but-legal skew is accepted
+    assert WorldSpec(size_variance=2.0).size_variance == 2.0

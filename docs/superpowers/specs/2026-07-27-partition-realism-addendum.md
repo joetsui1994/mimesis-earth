@@ -24,7 +24,7 @@
 
 | Field | Range | Default | Meaning |
 |---|---|---|---|
-| `size_variance` | 0.0–1.0 | 0.4 | Sigma of the log-normal growth weight per unit. 0 = current uniform-size behavior; higher = heavy-tailed unit areas. |
+| `size_variance` | 0.0–2.0 | 0.4 | Sigma of the log-normal growth weight per unit. 0 = current uniform-size behavior; higher = heavy-tailed unit areas. Above ~1.0 expect micro-units (1–2 atoms) as the size floor binds. |
 | `count_coupling` | 0.0–1.0 | 0.7 | How strongly a parent's child count follows its territory share. 0 = uniform counts (old behavior); 1 = fully proportional. |
 
 **Changed semantic — `count_variance`:** becomes the log-normal sigma

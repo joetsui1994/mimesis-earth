@@ -295,3 +295,19 @@ def test_plan_islands_clusters_when_quota_short(mesh):
     assert all(k == 1 for _, k in plans)
     covered = np.sort(np.concatenate([a for a, _ in plans]))
     np.testing.assert_array_equal(covered, np.sort(atom_idx))
+
+
+def test_partition_weighted_extreme_variance(mesh):
+    from scipy.sparse.csgraph import connected_components
+
+    parts = partition_atoms(
+        mesh, np.arange(2000), 8, None, 0.4, np.random.default_rng(90),
+        size_variance=2.0,
+    )
+    assert sum(len(p) for p in parts) == 2000
+    assert all(len(p) > 0 for p in parts)
+    for p in parts:
+        if len(p) < 2:
+            continue
+        n_comp, _ = connected_components(mesh.adjacency[p][:, p], directed=False)
+        assert n_comp == 1
