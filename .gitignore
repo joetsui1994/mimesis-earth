@@ -9,3 +9,4 @@ web/dist/
 .pytest_cache/
 .DS_Store
 web/public/worlds/
+web/public/wheels/
