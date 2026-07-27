@@ -2,10 +2,15 @@
 
 import numpy as np
 import shapely
-from shapely.ops import unary_union
 
 from mimesis_earth.attributes import population_density, round_preserving_sum
-from mimesis_earth.geometry import R_EARTH_KM, atoms_polygon, xyz_to_lonlat
+from mimesis_earth.geometry import (
+    PRECISION_GRID,
+    R_EARTH_KM,
+    atoms_polygon,
+    snap_union,
+    xyz_to_lonlat,
+)
 from mimesis_earth.landmask import build_landmask
 from mimesis_earth.mesh import build_mesh
 from mimesis_earth.naming import make_namer
@@ -137,7 +142,7 @@ def generate(spec: WorldSpec, _capture: dict | None = None) -> World:
         for i, node in enumerate(level_nodes[lvl + 1]):
             children_of[node["parent"]].append(geoms[lvl + 1][i])
         for i, childs in enumerate(children_of):
-            geoms[lvl][i] = shapely.set_precision(unary_union(childs), 1e-9)
+            geoms[lvl][i] = shapely.set_precision(snap_union(childs), PRECISION_GRID)
 
     # populations bottom-up
     pops: list[np.ndarray] = [None] * n_levels

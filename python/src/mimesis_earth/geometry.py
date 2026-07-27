@@ -14,6 +14,18 @@ from shapely.validation import make_valid
 
 R_EARTH_KM = 6371.0
 
+PRECISION_GRID = 1e-9
+
+
+def snap_union(geoms):
+    """Union polygons after snapping each to the precision grid.
+
+    Snapping BEFORE the union (not only after) keeps GEOS's overlay robust to
+    degenerate near-pole rings; older GEOS builds — e.g. Pyodide/WASM's
+    3.12.x — fatally reject them otherwise. Output is byte-identical across
+    GEOS versions (verified 3.12 WASM vs 3.13 native)."""
+    return unary_union([shapely.set_precision(g, PRECISION_GRID) for g in geoms])
+
 
 def xyz_to_lonlat(points: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     points = np.asarray(points)
@@ -96,4 +108,4 @@ def atoms_polygon(mesh, atom_ids, cell_cache: dict | None = None):
         if cell_cache is not None:
             cell_cache[i] = g
         geoms.append(g)
-    return shapely.set_precision(_polygons_only(unary_union(geoms)), 1e-9)
+    return shapely.set_precision(_polygons_only(snap_union(geoms)), PRECISION_GRID)

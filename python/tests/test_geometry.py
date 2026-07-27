@@ -80,3 +80,21 @@ def test_atoms_polygon_cache_reuse():
 
 def test_earth_radius_constant():
     assert R_EARTH_KM == 6371.0
+
+
+def test_snap_union_matches_and_snaps_inputs():
+    from mimesis_earth.geometry import PRECISION_GRID, snap_union
+    import shapely
+    from shapely.geometry import box
+
+    a = box(0, 0, 1, 1)
+    b = box(1, 0, 2, 1)  # shares the x=1 edge
+    merged = snap_union([a, b])
+    assert merged.is_valid
+    # union dissolves the shared edge into one 2x1 rectangle
+    assert abs(merged.area - 2.0) < 1e-9
+    # inputs with sub-grid offsets get snapped, so a near-degenerate sliver
+    # collapses rather than producing an invalid noding
+    tiny = box(0, 0, 1, 1e-12)  # thinner than the grid
+    out = snap_union([tiny])
+    assert out.is_valid
