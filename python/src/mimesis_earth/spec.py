@@ -1,11 +1,11 @@
 """World specification: the full parameter set that (with a seed) defines a world."""
 
 import math
-from typing import Optional, Union
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-GENERATOR_VERSION = "0.5.0"
+GENERATOR_VERSION = "0.6.0"
 
 _DEFAULT_LEVEL_NAMES = ["country", "province", "district", "ward", "block"]
 
@@ -22,10 +22,8 @@ class WorldSpec(BaseModel):
     spread: float = Field(default=0.7, ge=0.0, le=1.0)
     land_fraction: float = Field(default=0.3, gt=0.0, lt=0.8)
     coast_ruggedness: float = Field(default=0.5, ge=0.0, le=1.0)
-    border_roughness: Union[float, list[float]] = 0.7
-    count_variance: float = Field(default=0.2, ge=0.0, le=2.0)
+    border_roughness: float = Field(default=0.7, ge=0.0, le=2.0)
     size_variance: float = Field(default=0.4, ge=0.0, le=2.0)
-    count_coupling: float = Field(default=0.85, ge=0.0, le=1.0)
     border_meander: float = Field(default=0.8, ge=0.0, le=1.0)
     total_population: int = Field(default=50_000_000, gt=0)
     resolution: int = Field(default=20_000, ge=2_000, le=200_000)
@@ -34,11 +32,6 @@ class WorldSpec(BaseModel):
 
     def max_leaf_count(self) -> int:
         return math.prod(self.levels)
-
-    def border_roughness_per_level(self) -> list[float]:
-        if isinstance(self.border_roughness, list):
-            return self.border_roughness
-        return [self.border_roughness] * len(self.levels)
 
     @model_validator(mode="after")
     def _validate(self) -> "WorldSpec":
@@ -57,17 +50,6 @@ class WorldSpec(BaseModel):
                 f"{self.n_landmasses} (each landmass needs at least one "
                 f"top-level unit); lower n_landmasses or raise levels[0]"
             )
-        if isinstance(self.border_roughness, list) and len(
-            self.border_roughness
-        ) != len(self.levels):
-            raise ValueError("border_roughness list must match levels length")
-        values = (
-            self.border_roughness
-            if isinstance(self.border_roughness, list)
-            else [self.border_roughness]
-        )
-        if not all(0.0 <= v <= 2.0 for v in values):
-            raise ValueError("border_roughness values must be between 0.0 and 2.0")
         expected_land_atoms = self.resolution * self.land_fraction
         if self.max_leaf_count() * MIN_ATOMS_PER_LEAF > expected_land_atoms:
             need = int(self.max_leaf_count() * MIN_ATOMS_PER_LEAF / self.land_fraction)
