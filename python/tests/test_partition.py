@@ -135,48 +135,6 @@ def test_redistribute_counts():
     )
 
 
-def test_coupled_counts_exact_total_and_min_one():
-    from mimesis_earth.partition import coupled_counts
-
-    sizes = np.array([1000.0, 100.0, 10.0])
-    for variance in (0.0, 0.5, 1.0, 2.0):
-        out = coupled_counts(30, sizes, 0.7, variance, np.random.default_rng(70))
-        assert out.sum() == 30
-        assert (out >= 1).all()
-
-
-def test_coupled_counts_coupling_behavior():
-    from mimesis_earth.partition import coupled_counts
-
-    sizes = np.array([900.0, 90.0, 10.0])
-    flat = coupled_counts(30, sizes, 0.0, 0.0, np.random.default_rng(71))
-    prop = coupled_counts(30, sizes, 1.0, 0.0, np.random.default_rng(71))
-    assert flat.tolist() == [10, 10, 10]
-    assert prop[0] > 20 and prop[2] == 1
-
-
-def test_coupled_counts_deterministic():
-    from mimesis_earth.partition import coupled_counts
-
-    sizes = np.array([500.0, 300.0, 200.0])
-    a = coupled_counts(24, sizes, 0.7, 0.8, np.random.default_rng(72))
-    b = coupled_counts(24, sizes, 0.7, 0.8, np.random.default_rng(72))
-    np.testing.assert_array_equal(a, b)
-
-
-def test_honor_minimums():
-    from mimesis_earth.partition import honor_minimums
-
-    counts = np.array([1, 8, 1])
-    minimums = np.array([3, 1, 1])
-    out = honor_minimums(counts, minimums)
-    assert out.sum() == 10
-    assert out[0] == 3
-    # shortfall tolerated when donors run dry
-    out2 = honor_minimums(np.array([1, 1]), np.array([5, 5]))
-    assert out2.sum() == 2
-
-
 def test_partition_weighted_sizes():
     from scipy.sparse.csgraph import connected_components
 
@@ -255,48 +213,6 @@ def test_partition_weighted_contiguity_fuzz():
                 assert n_comp == 1, (sv, seed, len(p))
 
 
-def test_plan_islands_single_component(mesh):
-    from mimesis_earth.partition import plan_islands
-
-    plans = plan_islands(mesh, np.arange(2000), 5, 0.7, np.random.default_rng(80))
-    assert len(plans) == 1
-    atoms, k = plans[0]
-    assert k == 5 and len(atoms) == 2000
-
-
-def test_plan_islands_allocates_per_island(mesh):
-    from mimesis_earth.partition import plan_islands
-
-    z = mesh.points[:, 2]
-    north = np.flatnonzero(z > 0.88)
-    south = np.flatnonzero(z < -0.88)
-    atom_idx = np.concatenate([north, south])
-    plans = plan_islands(mesh, atom_idx, 6, 0.7, np.random.default_rng(81))
-    assert len(plans) == 2
-    ks = sorted(k for _, k in plans)
-    assert sum(ks) == 6 and ks[0] >= 1
-    covered = np.sort(np.concatenate([a for a, _ in plans]))
-    np.testing.assert_array_equal(covered, np.sort(atom_idx))
-
-
-def test_plan_islands_clusters_when_quota_short(mesh):
-    from mimesis_earth.partition import plan_islands
-
-    z = mesh.points[:, 2]
-    bands = [
-        np.flatnonzero(z > 0.9),
-        np.flatnonzero((z > 0.4) & (z < 0.6)),
-        np.flatnonzero((z > -0.6) & (z < -0.4)),
-        np.flatnonzero(z < -0.9),
-    ]
-    atom_idx = np.concatenate(bands)
-    plans = plan_islands(mesh, atom_idx, 2, 0.7, np.random.default_rng(82))
-    assert len(plans) == 2
-    assert all(k == 1 for _, k in plans)
-    covered = np.sort(np.concatenate([a for a, _ in plans]))
-    np.testing.assert_array_equal(covered, np.sort(atom_idx))
-
-
 def test_partition_weighted_extreme_variance(mesh):
     from scipy.sparse.csgraph import connected_components
 
@@ -358,6 +274,33 @@ def test_partition_cost_field_contiguity_without_repair(mesh):
                 mesh.adjacency[p][:, p], directed=False
             )
             assert n_comp == 1
+
+
+def test_partition_cost_field_bounded_stays_balanced(mesh):
+    # A BOUNDED cost field must still split a blob reasonably evenly: the field
+    # governs reachability in the weighted Voronoi, so an UNBOUNDED one lets a
+    # low-cost basin dominate and starves the rest into slivers. generate.py
+    # clips the exponent to keep this true (else a mainland collapses into one
+    # giant province). size_variance=0 isolates the field's own effect.
+    from mimesis_earth.noise import sphere_noise
+
+    field = sphere_noise(mesh.points, np.random.default_rng(200))
+    unbounded = np.exp(2.0 * field)
+    bounded = np.exp(np.clip(2.0 * field, -1.0, 1.0))  # matches generate.py
+    floor = len(mesh.points) // (4 * 6)
+    bounded_min, unbounded_min = [], []
+    for seed in (201, 202, 203, 204, 205):
+        for cost, out in ((bounded, bounded_min), (unbounded, unbounded_min)):
+            parts = partition_atoms(
+                mesh, np.arange(len(mesh.points)), 6, None, 1.0,
+                np.random.default_rng(seed), size_variance=0.0, atom_cost=cost,
+            )
+            assert sum(len(p) for p in parts) == len(mesh.points)
+            out.append(min(len(p) for p in parts))
+    # bounded field never collapses a part to a sliver...
+    assert min(bounded_min) >= floor, bounded_min
+    # ...whereas the unbounded field does (guards that the clip is load-bearing)
+    assert min(unbounded_min) < floor, unbounded_min
 
 
 def test_partition_cost_field_deterministic(mesh):

@@ -74,36 +74,37 @@ def test_rejects_unknown_field():
         WorldSpec(bogus_field=1)
 
 
-def test_border_roughness_per_level():
-    assert WorldSpec(levels=[4, 4]).border_roughness_per_level() == [0.7, 0.7]
-    assert WorldSpec(
-        levels=[4, 4], border_roughness=[0.1, 0.9]
-    ).border_roughness_per_level() == [0.1, 0.9]
-
-
 def test_new_realism_fields_defaults():
     spec = WorldSpec()
     assert spec.size_variance == 0.4
-    assert spec.count_coupling == 0.85
-    assert spec.generator_version == "0.5.0"
+    assert spec.generator_version == "0.6.0"
 
 
-def test_rejects_bad_size_variance_and_coupling():
+def test_rejects_bad_size_variance():
     with pytest.raises(ValidationError):
         WorldSpec(size_variance=2.5)
-    with pytest.raises(ValidationError):
-        WorldSpec(count_coupling=-0.1)
     # extreme-but-legal skew is accepted
     assert WorldSpec(size_variance=2.0).size_variance == 2.0
-    with pytest.raises(ValidationError):
-        WorldSpec(count_variance=2.5)
-    assert WorldSpec(count_variance=2.0).count_variance == 2.0
 
 
 def test_border_meander_field():
     spec = WorldSpec()
     assert spec.border_meander == 0.8
-    assert spec.generator_version == "0.5.0"
+    assert spec.generator_version == "0.6.0"
     with pytest.raises(ValidationError):
         WorldSpec(border_meander=1.5)
     assert WorldSpec(border_meander=0.0).border_meander == 0.0
+
+
+def test_spec_rejects_removed_and_list_fields():
+    with pytest.raises(Exception):
+        WorldSpec(count_coupling=0.5)          # removed field, extra=forbid
+    with pytest.raises(Exception):
+        WorldSpec(count_variance=0.5)          # removed field
+    with pytest.raises(Exception):
+        WorldSpec(border_roughness=[0.2, 0.5]) # now scalar-only
+
+
+def test_spec_border_roughness_scalar_ok():
+    s = WorldSpec(border_roughness=0.9)
+    assert s.border_roughness == 0.9

@@ -5,10 +5,9 @@ export interface Spec {
   n_landmasses: number
   spread: number
   coast_ruggedness: number
+  land_fraction: number
   border_roughness: number
   size_variance: number
-  count_coupling: number
-  count_variance: number
   border_meander: number
   total_population: number
   resolution: number

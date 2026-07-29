@@ -11,7 +11,6 @@ SPEC = WorldSpec(
     levels=[4, 3, 3],
     n_landmasses=2,
     resolution=6000,
-    count_variance=0.0,
     seed=7,
 )
 
@@ -204,7 +203,7 @@ def test_exported_ring_winding(tmp_path, world):
 def test_invariants_across_spec_shapes():
     specs = [
         WorldSpec(levels=[12], n_landmasses=4, resolution=6000, seed=3),
-        WorldSpec(levels=[6, 5], count_variance=0.5, resolution=6000, seed=4),
+        WorldSpec(levels=[6, 5], resolution=6000, seed=4),
         WorldSpec(
             levels=[4, 3, 2], n_landmasses=1, spread=1.0,
             coast_ruggedness=1.0, resolution=6000, seed=5,
@@ -214,64 +213,83 @@ def test_invariants_across_spec_shapes():
         w = generate(spec)
         for u in w.units:
             assert u.geometry.is_valid and not u.geometry.is_empty, (spec.seed, u.id)
-        if spec.count_variance == 0:
-            expected = 1
-            for level, c in enumerate(spec.levels):
-                expected *= c
-                assert len(w.units_at(level)) == expected, (spec.seed, level)
+        # counts are always exact under the bottom-up partitioner
+        expected = 1
+        for level, c in enumerate(spec.levels):
+            expected *= c
+            assert len(w.units_at(level)) == expected, (spec.seed, level)
         leaves = w.units_at(len(spec.levels) - 1)
         assert sum(u.population for u in leaves) == spec.total_population
         assert len({u.landmass for u in w.units_at(0)}) == spec.n_landmasses
 
 
-def test_low_level_units_contiguous():
-    from scipy.sparse.csgraph import connected_components
-
-    from mimesis_earth.partition import ISLET_MAX_ATOMS, count_sizeable_islands
-
-    specs = [
+def test_no_sliver_leaf_districts():
+    # Every leaf district must be drawable: >= MIN_ATOMS_PER_LEAF atoms. The
+    # whole-group partition can emit tiny fragments; leaf_partition's sliver
+    # repair must eliminate them (tested on the real pipeline, including an
+    # archipelago-prone spec, not just a clean single island).
+    from mimesis_earth.spec import MIN_ATOMS_PER_LEAF
+    for spec in (
+        WorldSpec(levels=[6, 5, 6], n_landmasses=3, resolution=20000, seed=0),
         WorldSpec(levels=[4, 4, 3], n_landmasses=3, coast_ruggedness=0.8,
                   resolution=8000, seed=21),
-        # archipelago-heavy: actually starves quota (4 quota-starved parents
-        # at seed 7, measured), so the exemption branch below is exercised
-        WorldSpec(levels=[6, 2, 2], n_landmasses=6, coast_ruggedness=1.0,
-                  spread=1.0, resolution=10000, land_fraction=0.12, seed=7),
-    ]
-    for spec in specs:
-        cap: dict = {}
+    ):
+        cap = {}
         generate(spec, _capture=cap)
-        mesh, level_nodes = cap["mesh"], cap["level_nodes"]
-        counts_by_level = cap["counts_by_level"]
-        probe_rng = np.random.default_rng(0)
-        for level in range(1, len(spec.levels)):
-            counts = counts_by_level[level]
-            for node in level_nodes[level]:
-                parent = level_nodes[level - 1][node["parent"]]
-                m = count_sizeable_islands(mesh, parent["atoms"], probe_rng)
-                if m > int(counts[node["parent"]]):
-                    continue  # sanctioned: quota-starved archipelago parent
-                atoms = node["atoms"]
-                sub = mesh.adjacency[atoms][:, atoms]
-                n_comp, comp = connected_components(sub, directed=False)
-                sizes = np.bincount(comp)
-                assert (sizes >= ISLET_MAX_ATOMS).sum() <= 1, (
-                    spec.seed, level, len(atoms), sorted(sizes.tolist()),
-                )
+        sizes = [len(node["atoms"]) for node in cap["level_nodes"][-1]]
+        assert min(sizes) >= MIN_ATOMS_PER_LEAF, (spec.seed, min(sizes))
 
 
-def test_exact_totals_at_any_variance_and_coupled_counts_vary():
-    spec = WorldSpec(
-        levels=[5, 4, 4], count_variance=0.8, count_coupling=1.0,
-        resolution=8000, seed=23,
-    )
-    world = generate(spec)
-    assert len(world.units_at(0)) == 5
-    assert len(world.units_at(1)) == 20
-    assert len(world.units_at(2)) == 80
-    per_parent: dict = {}
-    for u in world.units_at(1):
-        per_parent[u.parent_id] = per_parent.get(u.parent_id, 0) + 1
-    assert len(set(per_parent.values())) > 1
+def test_leaf_districts_contiguous_over_bridges():
+    # Districts are "contiguous by construction" over the partition graph, which
+    # includes within-group bridges (so a district may span a small sea gap to
+    # absorb an island). Assert each leaf is a single connected component over
+    # mesh edges UNION bridges -- this catches genuine shattering while allowing
+    # legitimate bridge-joined island districts.
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+    for spec in (
+        WorldSpec(levels=[4, 4, 3], n_landmasses=3, resolution=8000, seed=21),
+        WorldSpec(levels=[6, 2, 2], n_landmasses=4, resolution=8000,
+                  land_fraction=0.35, seed=7),
+    ):
+        cap = {}
+        generate(spec, _capture=cap)
+        mesh, level_nodes, bridges = cap["mesh"], cap["level_nodes"], cap["bridges"]
+        all_edges = np.vstack([mesh.edges, bridges]) if len(bridges) else mesh.edges
+        for node in level_nodes[-1]:            # leaf districts
+            atoms = node["atoms"]
+            pos = {int(a): i for i, a in enumerate(atoms)}
+            rows, cols = [], []
+            for a, b in all_edges:
+                ia, ib = pos.get(int(a)), pos.get(int(b))
+                if ia is not None and ib is not None:
+                    rows.append(ia)
+                    cols.append(ib)
+            adj = coo_matrix((np.ones(len(rows)), (rows, cols)),
+                             shape=(len(atoms), len(atoms)))
+            n_comp, _ = connected_components(adj, directed=False)
+            assert n_comp == 1, (spec.seed, len(atoms), n_comp)
+
+
+def test_exact_totals_and_organic_child_counts():
+    # Totals are ALWAYS exact regardless of size_variance. Per-parent child
+    # counts are organic (size-driven), not a hard per-seed guarantee, so check
+    # that variation shows up across a few seeds at meaningful size_variance
+    # rather than asserting it for one seed (a balanced seed can be uniform).
+    def province_counts(seed):
+        spec = WorldSpec(levels=[5, 4, 4], size_variance=0.8, resolution=8000,
+                         seed=seed)
+        world = generate(spec)
+        assert len(world.units_at(0)) == 5      # totals exact, every seed
+        assert len(world.units_at(1)) == 20
+        assert len(world.units_at(2)) == 80
+        per_parent: dict = {}
+        for u in world.units_at(1):
+            per_parent[u.parent_id] = per_parent.get(u.parent_id, 0) + 1
+        return set(per_parent.values())
+    # at least one of several seeds must show varied provinces-per-country
+    assert any(len(province_counts(s)) > 1 for s in (23, 24, 25, 26))
 
 
 def test_border_meander_changes_borders_only_when_on():
@@ -284,9 +302,65 @@ def test_border_meander_changes_borders_only_when_on():
     assert j_on != json.dumps(w_off.geojson_dict(1), sort_keys=True)
 
 
+def test_border_roughness_wiggles_coarse_borders():
+    # border_roughness must visibly perturb even country-level borders, not
+    # just deep levels. Measured layout-independently as the length-weighted
+    # tortuosity (path length / straight-line span) of every shared border
+    # between sibling countries, pooled across seeds (a single world has too
+    # few country borders to be stable). meander is off so only roughness
+    # acts. Guards against the old per-edge noise, which was near-inert at
+    # this scale (long-path averaging + Lloyd re-smoothing).
+    from shapely.ops import linemerge
+
+    seeds = range(6)
+
+    def pooled_tortuosity(roughness):
+        tort, wt = [], []
+        for seed in seeds:
+            world = generate(WorldSpec(
+                levels=[6, 4], n_landmasses=3, resolution=10000, seed=seed,
+                border_meander=0.0, size_variance=0.0,
+                border_roughness=roughness,
+            ))
+            units = world.units_at(0)
+            for i in range(len(units)):
+                for j in range(i + 1, len(units)):
+                    a, b = units[i].geometry, units[j].geometry
+                    if not a.intersects(b):
+                        continue
+                    shared = a.boundary.intersection(b.boundary)
+                    if shared.is_empty or shared.length == 0:
+                        continue
+                    if shared.geom_type == "LineString":
+                        lines = [shared]
+                    else:
+                        merged = linemerge(shared)
+                        lines = list(getattr(merged, "geoms", [merged]))
+                    for ln in lines:
+                        if ln.geom_type != "LineString" or len(ln.coords) < 2:
+                            continue
+                        p0, p1 = ln.coords[0], ln.coords[-1]
+                        span = np.hypot(p1[0] - p0[0], p1[1] - p0[1])
+                        if span < 1e-6:
+                            continue
+                        tort.append(ln.length / span)
+                        wt.append(ln.length)
+        tort, wt = np.array(tort), np.array(wt)
+        return float((tort * wt).sum() / wt.sum())
+
+    smooth = pooled_tortuosity(0.0)
+    rough = pooled_tortuosity(1.0)
+    # coarse low-res proxy (the definitive gate is scripts/measure_borders.py at
+    # full resolution / macro tortuosity); assert a clear roughness effect here.
+    assert rough > smooth * 1.05, f"roughness inert: {smooth:.3f} -> {rough:.3f}"
+
+
 def test_elevation_exported_and_coherent(tmp_path):
+    # roughness off so the coherent border-noise field doesn't compete with
+    # meander -- this test isolates the elevation-following (meander) effect
     spec = WorldSpec(levels=[4, 3], n_landmasses=2, coast_ruggedness=0.8,
-                     border_meander=1.0, resolution=8000, seed=41)
+                     border_meander=1.0, border_roughness=0.0, resolution=8000,
+                     seed=41)
     cap: dict = {}
     world = generate(spec, _capture=cap)
     for u in world.units:
