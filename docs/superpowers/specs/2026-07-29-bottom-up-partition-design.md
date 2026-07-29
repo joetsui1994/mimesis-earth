@@ -1,6 +1,6 @@
 # Bottom-up partition: districts-first agglomeration
 
-**Date:** 2026-07-29 (revised after design review + prototype measurement)
+**Date:** 2026-07-29 (revised after two design reviews + prototype measurements)
 **Status:** Design refined; pending re-review, then implementation plan.
 
 ## Problem
@@ -57,11 +57,32 @@ gate. This is a pooled measurement in a validation script, **not** a per-world
 unit assertion (single-world tortuosity is too noisy — it swings with seed and
 resolution).
 
+A second measurement (`scratchpad/proto_bal.py`, full hierarchy) checked
+**size balance**, which the second review flagged (H/I):
+
+| metric | top-down | bottom-up (biased) |
+|--------|----------|--------------------|
+| country size CV (mean of 6 seeds) | 0.71 | 0.31 |
+| country min/max ratio (mean) | 0.15 (worst seed 0.03) | 0.46 |
+| provinces per country (range) | — | 2–8 |
+
+Region-grow is *better* balanced than today's `partition_atoms` on average, and
+provinces-per-country varies organically (2–8). But one seed stranded a single
+district (isolated in the district graph) → an empty province → so a **straggler
+guard** is required (see Component 3), even though the average balance premise of
+review H is refuted. Full Lloyd/starved-escape rebalancing is **not** added
+(YAGNI given these numbers); a single straggler-attach pass suffices.
+
 ## Decisions (from brainstorming, unchanged by review)
 
 1. **Replace** the top-down partitioner entirely (no dual code path).
-2. **Exact totals, organic distribution.** Exactly the totals implied by
-   `levels`; per-parent child counts fall out of agglomeration.
+2. **Exact totals; organic distribution is real but not free (review J).**
+   Exactly the totals implied by `levels`. Per-parent child counts *do* vary
+   organically (measured: 2–8 provinces per country) — this arises from (a) the
+   coarse-item quantization at the country level and (b) `size_variance`'s
+   log-normal target spread, **not** as a cost-free structural property of
+   agglomeration. `size_variance` is the knob that governs how much diversity
+   there is; see the size-diversity target below.
 3. **"Landmass" = seed group** (unchanged): each land atom → nearest of
    `n_landmasses` seeds; a group is a main island plus the smaller islands
    nearest the same seed, bridged (star topology) to the main island.
@@ -117,6 +138,16 @@ Runs once. Totals from `levels` (`[6,5,6]` → 6 / 30 / 180).
 - Derive lower totals to keep nesting and totals exact:
   `P_g = C_g * levels[1]`, `D_g = P_g * levels[2]`. Distribution *within* a group
   is organic; group totals are fixed.
+- **Per-group feasibility (resolves review L).** Exact nesting forces the
+  smallest group to host `D_g` districts, i.e. ≥ `D_g * MIN_ATOMS_PER_LEAF`
+  atoms (240 at defaults). The current global check (`spec.py:71`) does not cover
+  this. Add an up-front validation: after count allocation, every group must have
+  `group_atoms >= D_g * MIN_ATOMS_PER_LEAF`. If not, the landmask retry loop
+  (which already retries seed placement, `landmask.py:35`) is asked to produce
+  less-lopsided groups; if it still fails after its retries, `generate` raises a
+  clear error (lower `n_landmasses`, raise `resolution`/`land_fraction`, or lower
+  `spread`) — matching the landmask's existing raise. Exact totals are preserved;
+  infeasible configs fail loudly rather than emitting non-drawable districts.
 
 ## Component 2 — per-island leaf partition (Phase 1)
 
@@ -128,7 +159,10 @@ For each group, partition its atoms into `D_g` single-island districts:
    attach the smallest unit to its nearest unit by chord distance. This
    generalizes the old islet-attach to the sizeable-island-surplus case. A
    clustered unit spans water — the one bounded exception to single-island
-   districts.
+   districts. (Review Q: this intentionally collapses the old `ISLET_MAX_ATOMS`
+   vs `MIN_ATOMS_PER_LEAF` distinction — `partition.py:14-20` kept them separate;
+   bottom-up uses the single `MIN_ATOMS_PER_LEAF` threshold and drops
+   `ISLET_MAX_ATOMS`.)
 3. **Allocate `D_g` districts across units ∝ size, clamped** so no unit gets more
    districts than `unit_atoms // MIN_ATOMS_PER_LEAF`; redistribute the overflow.
    This is exactly `redistribute_counts` — **so keep it** (resolves C).
@@ -146,12 +180,21 @@ contiguous groups with target sizes, biased to make borders wander.
 
 Inputs: item adjacency (edge weight = shared-border arc length; **bridge edges
 get weight ε** so bridged islands are eaten last — resolves the bridge
-link-metric gap in D), per-item size, per-item **ridge-field value** (sampled
-from a low-frequency `sphere_noise` at item centroids, independent rng stream),
-bias strength `λ` (∝ `border_roughness`), `K` target sizes, rng.
+link-metric gap in D), per-item size, per-item **ridge-field value**, bias
+strength `λ` (∝ `border_roughness`), `K` target sizes, rng.
+
+**Ridge field (resolves review O).** Sampled at item centroids from a
+low-frequency field with the same structure as `atom_cost` —
+`meander·elevation_z + roughness·noise` — on an independent rng stream. Using
+elevation (not just noise) makes `border_meander` propagate to macro borders:
+country/province borders settle along real elevation crests, not only along
+random ridges. (The prototype used noise-only and already hit +26%; adding the
+elevation term is a strict improvement to validate.)
 
 ```
-1. Seeds:    K farthest-point seeds on item centroids.
+1. Seeds:    K farthest-point seeds on item centroids. (Seeding is a tunable;
+             FPS already delivered the +26% wander, but jittered/interior seeds
+             are worth trying — review N.)
 2. Targets:  K sizes summing to total mass, log-normal spread ~ size_variance.
 3. Grow:     until all items assigned —
                • group selection: lowest (filled/target) ratio with non-empty
@@ -159,13 +202,23 @@ bias strength `λ` (∝ `border_roughness`), `K` target sizes, rng.
                • item selection within that group: maximize
                  (link_weight − λ·field[item]) + tiny rng tie-break, iterating
                  the frontier in SORTED item-id order → WANDER + determinism.
-4. Stranded: any item never reached attaches to the nearest assigned item by
-             chord (safety net; with ε bridges this rarely fires).
+4. Straggler guard (resolves review H/K): if the loop ends with any item still
+   unassigned (an item isolated in the graph — measured to happen rarely), attach
+   it to an ADJACENT assigned group (its strongest-link neighbor's group), never
+   by chord distance. Chord-attach is banned because it produces geographically
+   disconnected units (the failure that forced `_repair_contiguity` to exist).
+   A truly neighborless item is a leaf-partition bug to fix upstream, not to
+   paper over here.
 ```
 
 Properties:
-- **Contiguous by construction** — no repair pass.
-- **Balanced** — feed-most-behind pulls sizes to targets (independent of field).
+- **Contiguous by construction** — no repair pass; the straggler guard only ever
+  attaches across an existing graph edge, so contiguity holds.
+- **Balanced (best-effort, measured good)** — feed-most-behind pulls sizes to
+  targets independent of the field. Measured country CV 0.31 vs top-down 0.71;
+  min/max 0.46 vs 0.15. Not a hard guarantee (a boxed-in seed stops under
+  target), but empirically better than the partitioner it replaces. No full
+  Lloyd/starved-escape rebalance is added (YAGNI given the numbers).
 - **Macro-wander** — eating low-field items first leaves borders on the field's
   high ridges; low frequency ⇒ wander at country scale. Measured +26% macro
   tortuosity; contiguity unaffected.
@@ -176,22 +229,30 @@ Properties:
 Per group `g`:
 1. Districts from Phase 1.
 2. District adjacency graph: mesh edges (arc-length weight) **plus** within-group
-   bridges at weight ε. This is the single, coherent island-absorption mechanism
-   (resolves D): a secondary island is reachable only via its ε bridge to the
-   main island, so it is picked up — last — by the group owning that bridge
-   endpoint. No separate "stranded vs frontier" ambiguity.
+   bridges at weight ε. Because the landmask bridges every secondary island to
+   the group's main island (star topology, `landmask.py:75-84`), **the within-
+   group district graph is always connected — a stated invariant** (resolves K).
+   Island absorption is one coherent mechanism (resolves D/K): a secondary island
+   is reachable only via its ε bridge, so it is picked up — last — by the group
+   owning the district at the bridge's main-island endpoint (the nearest mainland
+   region, not an arbitrary far country). No chord-attach; the invariant makes it
+   unnecessary and the straggler guard is graph-adjacent only.
 3. Field-biased region-grow districts → `P_g` provinces.
 4. Province adjacency graph (province-province shared borders; bridges inherited);
    field-biased region-grow provinces → `C_g` countries.
 5. Emit `level_nodes` with parent pointers and `landmass = g` on countries.
+   Groups are built independently then concatenated into the flat global
+   `level_nodes[level]`, so each group's parent indices must be **offset by that
+   group's base position** in the global list (resolves review Q — off-by-one
+   prone; assemble with explicit per-group offsets).
 
 ## Knob mapping (Option A)
 
 | knob | role |
 |------|------|
 | `n_landmasses`, `spread`, `coast_ruggedness`, `land_fraction` | landmask only |
-| `border_roughness` | atom-level leaf texture **and** region-grow field-bias strength λ (macro-wander) |
-| `border_meander` | elevation term in the leaf cost field |
+| `border_roughness` | atom-level leaf texture **and** region-grow field-bias strength λ (macro-wander). **Collapsed to a scalar** (review M): the per-level list form is removed since only the leaf field consumed it and the list mapping is undefined in bottom-up; passing a list is rejected in validation. |
+| `border_meander` | elevation term in the leaf cost field **and** in the region-grow ridge field (so meander propagates to macro borders — review O) |
 | `size_variance` | spread of target sizes at every level (see caveat below) |
 | `resolution`, `total_population`, `seed`, `levels` | unchanged |
 | ~~`count_coupling`~~, ~~`count_variance`~~ | removed |
@@ -249,6 +310,13 @@ determinism; geometries valid; population sums.
   district ≥ `MIN_ATOMS_PER_LEAF`.
 - a too-small island is absorbed by a within-group neighbor and **never** across
   groups.
+- **balance (review P/H/I):** country and province atom-size CV stays below a
+  documented bound (measured ~0.31 for countries; assert ≤ ~0.45 pooled), and the
+  straggler guard leaves no unassigned item and no empty group.
+- **per-group feasibility (review P/L):** a small lopsided landmass either
+  generates valid drawable districts or raises the clear feasibility error — a
+  regression test with a deliberately small group asserts one of those two, never
+  a silent sub-`MIN_ATOMS` district.
 - determinism under canonical ordering (same seed → identical `level_nodes`).
 - **macro-wander (replaces the tautological border-inheritance test):** a
   pooled validation script asserts interior country-border macro tortuosity
@@ -270,9 +338,14 @@ version bump documents the break.
 
 - **`#islands > D_g` / sub-MIN islets:** handled by the Component-2 clustering
   step; every district ends ≥ `MIN_ATOMS_PER_LEAF`.
-- **Group too small for `D_g` drawable districts:** the global validation bounds
-  this in aggregate; per-group, clustering reduces unit count until feasible, and
-  if still infeasible the spec validation should catch it up front.
+- **Group too small for `D_g` drawable districts (review L):** the new per-group
+  feasibility check (Component 1) catches this up front — landmask retries for
+  less-lopsided groups, else `generate` raises with actionable guidance. Exact
+  totals preserved; no silent sub-`MIN_ATOMS` districts.
+- **Region-grow balance is best-effort, not guaranteed (review H/I):** a boxed-in
+  seed can stop under target; measured balance is nonetheless better than
+  top-down (CV 0.31 vs 0.71). The straggler guard prevents unassigned items;
+  balance is asserted by test, not by construction.
 - **Determinism:** all seeds, targets, tie-breaks draw from `spec.seed` in fixed
   order; region-grow iterates items in sorted-id order.
 - **Field-bias strength:** too high can over-fragment province shapes; `λ ≈ 3`
