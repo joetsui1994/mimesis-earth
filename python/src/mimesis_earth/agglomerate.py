@@ -205,6 +205,34 @@ def _grow_targets(total_mass, k, size_variance, rng):
     return total_mass * w / w.sum()
 
 
+def _merge_adjacent_landmasses(mesh, mask, n_groups):
+    """Union seed-groups whose land is physically contiguous (share a mesh edge,
+    not just a bridge). At low spread the seeds cluster and the land is one blob
+    split into groups by straight nearest-seed Voronoi lines; merging those
+    groups lets one blob be partitioned as a whole, so country borders across it
+    are region-grow borders (wander) instead of the straight Voronoi split.
+    Returns a list of groups, each a list of seed-group ids forming one blob."""
+    parent = list(range(n_groups))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    e = mesh.edges
+    ga, gb = mask.group[e[:, 0]], mask.group[e[:, 1]]
+    m = (ga >= 0) & (gb >= 0) & (ga != gb)
+    for a, b in zip(ga[m].tolist(), gb[m].tolist()):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+    units = defaultdict(list)
+    for g in range(n_groups):
+        units[find(g)].append(g)
+    return list(units.values())
+
+
 def partition_world(mesh, mask, spec, atom_cost, grow_field, rng):
     """Bottom-up partition. Returns level_nodes: list per level of
     dicts {atoms, parent, landmass}. Leaves are districts; parents set by
@@ -217,15 +245,18 @@ def partition_world(mesh, mask, spec, atom_cost, grow_field, rng):
     # meander contribution whenever roughness=0 (borders must still follow
     # elevation crests when meander is on and roughness is off).
     lam = GROW_BIAS
-    group_sizes = np.array(
-        [(mask.group == g).sum() for g in range(spec.n_landmasses)], dtype=float
+    # Partition unit = a contiguous land blob (one or more seed-groups merged);
+    # this keeps borders on contiguous land as region-grow borders.
+    units = _merge_adjacent_landmasses(mesh, mask, spec.n_landmasses)
+    unit_sizes = np.array(
+        [int(np.isin(mask.group, u).sum()) for u in units], dtype=float
     )
-    C, D = allocate_group_counts(group_sizes, levels)
+    C, D = allocate_group_counts(unit_sizes, levels)
 
     level_nodes = [[] for _ in range(n_levels)]
 
-    for g in range(spec.n_landmasses):
-        group_atoms = np.flatnonzero(mask.group == g)
+    for g, unit_groups in enumerate(units):
+        group_atoms = np.flatnonzero(np.isin(mask.group, unit_groups))
         # per-level counts for this group (index 0 = countries ... last = leaves)
         cnt = [int(C[g])]
         for lvl in range(1, n_levels):

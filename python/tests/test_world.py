@@ -39,8 +39,12 @@ def test_ids_and_parents(world):
 
 
 def test_landmass_count(world):
+    # landmass = contiguous-blob id: seed-groups whose land touches are merged
+    # into one partition unit, so the count is between 1 and n_landmasses
+    # (fewer when the land forms fewer blobs), with contiguous ids from 0.
     landmasses = {u.landmass for u in world.units_at(0)}
-    assert landmasses == {0, 1}
+    assert 1 <= len(landmasses) <= SPEC.n_landmasses
+    assert landmasses == set(range(len(landmasses)))
 
 
 def test_geometries_valid_and_in_range(world):
@@ -220,7 +224,52 @@ def test_invariants_across_spec_shapes():
             assert len(w.units_at(level)) == expected, (spec.seed, level)
         leaves = w.units_at(len(spec.levels) - 1)
         assert sum(u.population for u in leaves) == spec.total_population
-        assert len({u.landmass for u in w.units_at(0)}) == spec.n_landmasses
+        # landmass = contiguous blob; count is 1..n_landmasses (seed-groups on
+        # one blob merge), with contiguous ids from 0.
+        landmasses = {u.landmass for u in w.units_at(0)}
+        assert 1 <= len(landmasses) <= spec.n_landmasses
+        assert landmasses == set(range(len(landmasses)))
+
+
+def test_low_spread_contiguous_land_wanders_and_generates():
+    # Regression: at low spread the land is one contiguous blob; seed-groups on
+    # it are merged so it partitions as a whole. Country borders must wander (not
+    # collapse to straight nearest-seed Voronoi lines) AND generation must not
+    # raise a per-group feasibility error even with n_landmasses ~= levels[0].
+    from shapely.ops import linemerge
+
+    def country_macro_tortuosity(w):
+        u = w.units_at(0)
+        tot, wt = [], []
+        for i in range(len(u)):
+            for j in range(i + 1, len(u)):
+                a, b = u[i].geometry, u[j].geometry
+                if not a.intersects(b):
+                    continue
+                sh = a.boundary.intersection(b.boundary)
+                if sh.is_empty or sh.length == 0:
+                    continue
+                lines = ([sh] if sh.geom_type == "LineString"
+                         else list(getattr(linemerge(sh), "geoms", [linemerge(sh)])))
+                for ln in lines:
+                    if ln.geom_type != "LineString" or len(ln.coords) < 2:
+                        continue
+                    p0, p1 = ln.coords[0], ln.coords[-1]
+                    span = np.hypot(p1[0] - p0[0], p1[1] - p0[1])
+                    if span < 3:
+                        continue
+                    tot.append(ln.simplify(1.2).length / span)
+                    wt.append(span)
+        tot, wt = np.array(tot), np.array(wt)
+        return float((tot * wt).sum() / wt.sum()) if len(tot) else float("nan")
+
+    torts = []
+    for seed in (941001, 1, 2, 3):
+        w = generate(WorldSpec(levels=[6, 5, 6], n_landmasses=5, spread=0.1,
+                               border_roughness=1.0, border_meander=1.0,
+                               resolution=12000, seed=seed))  # must not raise
+        torts.append(country_macro_tortuosity(w))
+    assert np.nanmean(torts) > 1.35, torts  # was ~1.17 (straight) before the fix
 
 
 def test_no_sliver_leaf_districts():

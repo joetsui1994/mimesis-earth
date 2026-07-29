@@ -46,6 +46,10 @@ BORDER_NOISE_FREQ = 9.0
 BORDER_NOISE_OCTAVES = 5
 BORDER_NOISE_PERSISTENCE = 0.82
 
+# Base frequency of the macro ridge field that biases region-grow (country /
+# province borders follow its ridges).
+GROW_FIELD_FREQ = 4.0
+
 
 def generate(spec: WorldSpec, _capture: dict | None = None) -> World:
     rng = np.random.default_rng(spec.seed)
@@ -69,7 +73,7 @@ def generate(spec: WorldSpec, _capture: dict | None = None) -> World:
     # country scale; elevation term makes meander propagate to higher levels.
     grow_noise = sphere_noise(
         mesh.points, np.random.default_rng([spec.seed, 0x6600]),
-        octaves=3, base_freq=4.0, persistence=0.7,
+        octaves=3, base_freq=GROW_FIELD_FREQ, persistence=0.7,
     )
     grow_field = spec.border_meander * elev_z + spec.border_roughness * grow_noise
 
