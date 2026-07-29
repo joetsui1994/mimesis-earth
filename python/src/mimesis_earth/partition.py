@@ -313,6 +313,26 @@ def count_sizeable_islands(
     return len(sizeable)
 
 
+def _cluster_islands(pts, comp, owner, island_ids, island_sizes, n_groups):
+    """Merge `island_ids` into `n_groups` clusters: keep the `n_groups`
+    largest as cluster seeds and attach every smaller island to whichever
+    seed holds its single closest atom (chord distance). Returns the updated
+    component->owner array (each clustered island now points at its seed) and
+    the seed island ids."""
+    order = island_ids[np.argsort(-np.asarray(island_sizes))]
+    seeds = order[:n_groups]
+    cluster_of = {int(s): int(s) for s in seeds}
+    seed_atoms = np.isin(comp, seeds)
+    seed_tree = cKDTree(pts[seed_atoms])
+    seed_atom_comp = comp[seed_atoms]
+    for c in order[n_groups:]:
+        d, nn = seed_tree.query(pts[comp == c])
+        nearest = int(np.argmin(d))
+        cluster_of[int(c)] = int(seed_atom_comp[nn[nearest]])
+    owner = np.array([cluster_of.get(int(o), int(o)) for o in owner])
+    return owner, seeds
+
+
 def plan_islands(
     mesh: Mesh,
     atom_idx: np.ndarray,
@@ -363,33 +383,62 @@ def plan_islands(
             owner[c] = s
 
     m = len(sizeable)
+    group_sizes = np.array([float(sizes[owner == s].sum()) for s in sizeable])
     if m <= k:
-        group_sizes = np.array(
-            [float(sizes[owner == s].sum()) for s in sizeable]
-        )
-        alloc = allocate_counts(k, group_sizes**coupling)
-        # uniform coupling (coupling=0) can hand a 1-atom island the same
-        # quota as a continent; cap allocation at a soft per-island capacity
-        # first, falling back to the hard atom-count capacity, so tiny
-        # islands don't spawn spammy 1-atom children when a softer split
-        # across the other islands is feasible.
-        soft = np.maximum(1, (group_sizes // ISLET_MAX_ATOMS).astype(int))
-        if soft.sum() >= k:
-            alloc = redistribute_counts(alloc, soft)
-        alloc = redistribute_counts(alloc, group_sizes.astype(int))
-        groups = list(zip(sizeable.tolist(), alloc.tolist()))
+        # Reserve the dominant landmass its coupling-weighted share of the
+        # province budget FIRST, then hand the remainder to the other islands
+        # -- one each where the budget allows, else cluster the smallest into
+        # shared island-provinces. Without this, forcing every sizeable island
+        # to be its own province (honor_minimums in generate.py) collapses a
+        # big mainland flanked by several small islands into a single giant
+        # province: when k ~= island count each island claims its mandatory
+        # one and nothing is left for the mainland, however high coupling is.
+        main_pos = int(group_sizes.argmax())
+        main_id = int(sizeable[main_pos])
+        others_pos = [p for p in range(m) if p != main_pos]
+        if not others_pos:
+            groups = [(main_id, k)]
+        else:
+            w = group_sizes**coupling
+            other_ids = sizeable[others_pos]
+            other_sizes = group_sizes[others_pos]
+            main_k = int(np.clip(np.floor(k * w[main_pos] / w.sum()), 1, k - 1))
+            leftover = k - main_k
+            if len(others_pos) <= leftover:
+                # room for one province per island: split the remainder by
+                # coupling-weighted size, but cap tiny islands at a soft
+                # per-island capacity so they don't spawn spammy 1-atom
+                # children when a softer split across the others is feasible.
+                alloc_o = allocate_counts(leftover, other_sizes**coupling)
+                soft = np.maximum(1, (other_sizes // ISLET_MAX_ATOMS).astype(int))
+                if soft.sum() >= leftover:
+                    alloc_o = redistribute_counts(alloc_o, soft)
+                group_ids = np.concatenate([[main_id], other_ids]).astype(int)
+                alloc = np.concatenate([[main_k], alloc_o]).astype(int)
+                caps = np.concatenate(
+                    [[group_sizes[main_pos]], other_sizes]
+                ).astype(int)
+            else:
+                # too many islands for the leftover budget: cluster the
+                # smallest into `leftover` shared island-provinces.
+                owner, seeds = _cluster_islands(
+                    pts, comp, owner, other_ids, other_sizes, leftover
+                )
+                group_ids = np.concatenate([[main_id], seeds]).astype(int)
+                alloc = np.concatenate(
+                    [[main_k], np.ones(len(seeds), dtype=int)]
+                ).astype(int)
+                caps = np.array(
+                    [int((owner[comp] == s).sum()) for s in group_ids]
+                )
+            # final capacity clamp; any overflow flows to the parent with the
+            # most headroom (the mainland), reinforcing its share.
+            alloc = redistribute_counts(alloc, caps)
+            groups = list(zip(group_ids.tolist(), alloc.tolist()))
     else:
-        order = sizeable[np.argsort(-sizes[sizeable])]
-        cluster_seeds = order[:k]
-        cluster_of = {int(s): int(s) for s in cluster_seeds}
-        seed_atoms = np.isin(comp, cluster_seeds)
-        seed_tree = cKDTree(pts[seed_atoms])
-        seed_atom_comp = comp[seed_atoms]
-        for c in order[k:]:
-            d, nn = seed_tree.query(pts[comp == c])
-            nearest = int(np.argmin(d))
-            cluster_of[int(c)] = int(seed_atom_comp[nn[nearest]])
-        owner = np.array([cluster_of.get(int(o), int(o)) for o in owner])
+        owner, cluster_seeds = _cluster_islands(
+            pts, comp, owner, sizeable, sizes[sizeable].astype(float), k
+        )
         groups = [(int(s), 1) for s in cluster_seeds]
     out = []
     for s, count in groups:

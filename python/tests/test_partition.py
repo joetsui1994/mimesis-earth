@@ -297,6 +297,60 @@ def test_plan_islands_clusters_when_quota_short(mesh):
     np.testing.assert_array_equal(covered, np.sort(atom_idx))
 
 
+def test_plan_islands_mainland_not_starved_by_islands():
+    from mimesis_earth.partition import _island_analysis, plan_islands
+
+    # A dominant mainland flanked by several small islands with a tight
+    # province budget (k == island count) and max coupling must NOT collapse
+    # the mainland into a single giant province: it keeps its size-weighted
+    # share while the smaller islands cluster into shared island-provinces.
+    big = build_mesh(5000, np.random.default_rng(20))
+    pts = big.points
+    lon = np.arctan2(pts[:, 1], pts[:, 0])
+    z = pts[:, 2]
+    mainland = np.flatnonzero(z > 0.45)
+    islands = [
+        np.flatnonzero((z < -0.55) & (np.abs(lon - lon0) < 0.25))
+        for lon0 in np.linspace(-2.6, 2.6, 4)
+    ]
+    atom_idx = np.unique(np.concatenate([mainland] + islands))
+    _, _, sizes, sizeable = _island_analysis(big, atom_idx, np.random.default_rng(0))
+    assert len(sizeable) == 5  # guards the fixture: 1 mainland + 4 sizeable islands
+    k = len(sizeable)
+    plans = plan_islands(big, atom_idx, k, 1.0, np.random.default_rng(1))
+    covered = np.sort(np.concatenate([a for a, _ in plans]))
+    np.testing.assert_array_equal(covered, np.sort(atom_idx))
+    assert sum(kk for _, kk in plans) == k
+    mainland_plan = max(plans, key=lambda g: len(g[0]))
+    assert mainland_plan[1] >= 2  # mainland no longer starved to one province
+
+
+def test_plan_islands_gives_islands_own_provinces_when_budget_allows():
+    from mimesis_earth.partition import _island_analysis, plan_islands
+
+    # With ample budget the small islands still each get their own province;
+    # mainland-share-first must not swallow them when there is room.
+    big = build_mesh(5000, np.random.default_rng(20))
+    pts = big.points
+    lon = np.arctan2(pts[:, 1], pts[:, 0])
+    z = pts[:, 2]
+    mainland = np.flatnonzero(z > 0.45)
+    islands = [
+        np.flatnonzero((z < -0.55) & (np.abs(lon - lon0) < 0.25))
+        for lon0 in np.linspace(-2.6, 2.6, 4)
+    ]
+    atom_idx = np.unique(np.concatenate([mainland] + islands))
+    _, _, _, sizeable = _island_analysis(big, atom_idx, np.random.default_rng(0))
+    k = len(sizeable) + 8  # generous budget
+    plans = plan_islands(big, atom_idx, k, 0.85, np.random.default_rng(2))
+    assert sum(kk for _, kk in plans) == k
+    covered = np.sort(np.concatenate([a for a, _ in plans]))
+    np.testing.assert_array_equal(covered, np.sort(atom_idx))
+    # every sizeable island is its own group and hosts at least one province
+    assert len(plans) == len(sizeable)
+    assert all(kk >= 1 for _, kk in plans)
+
+
 def test_partition_weighted_extreme_variance(mesh):
     from scipy.sparse.csgraph import connected_components
 
@@ -358,6 +412,33 @@ def test_partition_cost_field_contiguity_without_repair(mesh):
                 mesh.adjacency[p][:, p], directed=False
             )
             assert n_comp == 1
+
+
+def test_partition_cost_field_bounded_stays_balanced(mesh):
+    # A BOUNDED cost field must still split a blob reasonably evenly: the field
+    # governs reachability in the weighted Voronoi, so an UNBOUNDED one lets a
+    # low-cost basin dominate and starves the rest into slivers. generate.py
+    # clips the exponent to keep this true (else a mainland collapses into one
+    # giant province). size_variance=0 isolates the field's own effect.
+    from mimesis_earth.noise import sphere_noise
+
+    field = sphere_noise(mesh.points, np.random.default_rng(200))
+    unbounded = np.exp(2.0 * field)
+    bounded = np.exp(np.clip(2.0 * field, -1.0, 1.0))  # matches generate.py
+    floor = len(mesh.points) // (4 * 6)
+    bounded_min, unbounded_min = [], []
+    for seed in (201, 202, 203, 204, 205):
+        for cost, out in ((bounded, bounded_min), (unbounded, unbounded_min)):
+            parts = partition_atoms(
+                mesh, np.arange(len(mesh.points)), 6, None, 1.0,
+                np.random.default_rng(seed), size_variance=0.0, atom_cost=cost,
+            )
+            assert sum(len(p) for p in parts) == len(mesh.points)
+            out.append(min(len(p) for p in parts))
+    # bounded field never collapses a part to a sliver...
+    assert min(bounded_min) >= floor, bounded_min
+    # ...whereas the unbounded field does (guards that the clip is load-bearing)
+    assert min(unbounded_min) < floor, unbounded_min
 
 
 def test_partition_cost_field_deterministic(mesh):

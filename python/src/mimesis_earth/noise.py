@@ -14,15 +14,18 @@ def sphere_noise(
     octaves: int = 4,
     waves_per_octave: int = 6,
     base_freq: float = 3.0,
+    persistence: float = 0.55,
 ) -> np.ndarray:
     """Smooth zero-mean unit-variance noise sampled at `points` on the unit sphere.
 
     Sum of random plane waves; smooth by construction, fully determined by rng.
+    `persistence` is the per-octave amplitude decay: higher gives the finer
+    octaves more weight (denser mid-scale ridges, less dominated by the base).
     """
     out = np.zeros(len(points))
     for octave in range(octaves):
         freq = base_freq * 2.0**octave
-        amp = 0.55**octave
+        amp = persistence**octave
         dirs = unit_vectors(waves_per_octave, rng)
         phases = rng.uniform(0, 2 * np.pi, waves_per_octave)
         for u, phase in zip(dirs, phases):

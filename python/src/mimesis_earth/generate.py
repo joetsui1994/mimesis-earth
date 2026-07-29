@@ -14,6 +14,7 @@ from mimesis_earth.geometry import (
 from mimesis_earth.landmask import build_landmask
 from mimesis_earth.mesh import build_mesh
 from mimesis_earth.naming import make_namer
+from mimesis_earth.noise import sphere_noise
 from mimesis_earth.partition import (
     _island_analysis,
     allocate_counts,
@@ -26,25 +27,79 @@ from mimesis_earth.partition import (
 from mimesis_earth.spec import WorldSpec
 from mimesis_earth.world import Unit, World, _rfc7946
 
+# Exponent coefficient for the coherent border-roughness cost field. With the
+# clip below, a larger value sharpens the noise ridges (borders follow them
+# more decisively -> more wiggle) without unbalancing the partition, since the
+# clip caps contrast regardless. 1.5 gives a clearly visible country-level
+# effect (~+17% border tortuosity at max roughness) while keeping province
+# balance strong; the previously-used per-edge noise was near-inert at that
+# scale (long-path averaging + Lloyd re-smoothing washed it out).
+BORDER_NOISE_COST = 1.5
+
+# Bound on the |atom_cost| exponent. The cost field shapes borders (they
+# follow its crests) but ALSO governs reachability in the weighted-Voronoi
+# partition, so an unbounded field lets one low-cost basin dominate and
+# starves the rest into slivers (and collapses a mainland into one giant
+# province). Clipping keeps enough contrast to wiggle borders (ratio up to
+# e^2 ~ 7x) while keeping partitions balanced.
+COST_EXPONENT_CLIP = 1.0
+
+# Coherent border field shape. base_freq puts the dominant wavelength near
+# country-border scale (~20deg). High persistence gives the mid-frequency
+# octaves more weight so ridges are DENSE -- without it, a border between two
+# countries separated by a flat patch of the field gets a near-straight
+# bisector, leaving "quite a few straight pairs"; dense ridges make nearly
+# every border cross one and bend (straight-pair fraction ~18% -> ~5%).
+BORDER_NOISE_FREQ = 9.0
+BORDER_NOISE_OCTAVES = 5
+BORDER_NOISE_PERSISTENCE = 0.82
+
 
 def generate(spec: WorldSpec, _capture: dict | None = None) -> World:
     rng = np.random.default_rng(spec.seed)
     mesh = build_mesh(spec.resolution, rng)
     mask = build_landmask(mesh, spec, rng)
-    # cost field: borders settle on elevation crests (watersheds), using the
-    # same field that defines land/sea via landmask.py's sea-level quantile.
-    # z-score against land-only elevation stats: atom_cost is only ever read
-    # on land-restricted subgraphs (partition_atoms is always called with a
-    # land/landmass atom subset), so normalizing against the full mesh -
-    # which mixes in the sea's much lower, differently-distributed elevation
-    # - dilutes the std and washes out the contrast among land atoms where
-    # it actually matters.
+    # cost field: borders settle on cost crests (watersheds). Two additive
+    # contributions in the exponent, both multiplicative on edge weight:
+    #  - meander follows elevation crests, using the same field that defines
+    #    land/sea via landmask.py's sea-level quantile. z-score against
+    #    land-only elevation stats: atom_cost is only ever read on
+    #    land-restricted subgraphs (partition_atoms is always called with a
+    #    land/landmass atom subset), so normalizing against the full mesh --
+    #    which mixes in the sea's much lower, differently-distributed
+    #    elevation -- dilutes the std and washes out the contrast among land
+    #    atoms where it actually matters.
+    #  - roughness follows a coherent (spatially-correlated) random field.
+    #    This is deliberately NOT the per-edge i.i.d. noise in _subgraph:
+    #    that noise averages out over the long dijkstra paths that define
+    #    coarse units and is then re-smoothed by Lloyd, so it barely wiggles
+    #    country-scale borders however high it is set. A low-frequency
+    #    coherent field survives both, giving roughness real, scale-
+    #    independent effect. roughness is per-level, so the field is scaled
+    #    per level below.
     land_elevation = mask.elevation[mask.land]
-    atom_cost = np.exp(
-        1.5 * spec.border_meander
-        * ((mask.elevation - land_elevation.mean()) / land_elevation.std())
+    elev_z = (mask.elevation - land_elevation.mean()) / land_elevation.std()
+    # draw the coherent border field from an INDEPENDENT stream so it never
+    # perturbs the main rng sequence (seeds, variance, population, names).
+    # Consequence: border_roughness=0 reproduces the pre-field output exactly.
+    # base_freq is raised above the sphere_noise default so the dominant
+    # wavelength (~1/base_freq of the sphere) lands near country-border scale
+    # -- at the default it's a ~60deg lobe, larger than a country, so country
+    # borders sit inside one smooth lobe and stay near-straight.
+    border_field = sphere_noise(
+        mesh.points, np.random.default_rng([spec.seed, 0xB0DE]),
+        octaves=BORDER_NOISE_OCTAVES, base_freq=BORDER_NOISE_FREQ,
+        persistence=BORDER_NOISE_PERSISTENCE,
     )
     roughness = spec.border_roughness_per_level()
+
+    def atom_cost_for(level: int) -> np.ndarray:
+        expo = (
+            1.5 * spec.border_meander * elev_z
+            + BORDER_NOISE_COST * roughness[level] * border_field
+        )
+        return np.exp(np.clip(expo, -COST_EXPONENT_CLIP, COST_EXPONENT_CLIP))
+
     n_levels = len(spec.levels)
 
     # --- partition atoms level by level ---------------------------------
@@ -63,7 +118,7 @@ def generate(spec: WorldSpec, _capture: dict | None = None) -> World:
         idx = np.flatnonzero(mask.group == g)
         parts = partition_atoms(
             mesh, idx, int(counts0[g]), mask.bridges, roughness[0], rng,
-            size_variance=spec.size_variance, atom_cost=atom_cost,
+            size_variance=spec.size_variance, atom_cost=atom_cost_for(0),
         )
         for atoms in parts:
             top.append({"atoms": atoms, "parent": None, "landmass": g})
@@ -101,7 +156,7 @@ def generate(spec: WorldSpec, _capture: dict | None = None) -> World:
             ):
                 parts = partition_atoms(
                     mesh, group_atoms, group_k, None, roughness[level], rng,
-                    size_variance=spec.size_variance, atom_cost=atom_cost,
+                    size_variance=spec.size_variance, atom_cost=atom_cost_for(level),
                 )
                 for atoms in parts:
                     current.append({"atoms": atoms, "parent": parent_index})

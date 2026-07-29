@@ -227,7 +227,7 @@ def test_invariants_across_spec_shapes():
 def test_low_level_units_contiguous():
     from scipy.sparse.csgraph import connected_components
 
-    from mimesis_earth.partition import ISLET_MAX_ATOMS, count_sizeable_islands
+    from mimesis_earth.partition import ISLET_MAX_ATOMS, plan_islands
 
     specs = [
         WorldSpec(levels=[4, 4, 3], n_landmasses=3, coast_ruggedness=0.8,
@@ -237,6 +237,18 @@ def test_low_level_units_contiguous():
         WorldSpec(levels=[6, 2, 2], n_landmasses=6, coast_ruggedness=1.0,
                   spread=1.0, resolution=10000, land_fraction=0.12, seed=7),
     ]
+
+    def has_multi_island_group(mesh, atoms, k, coupling, rng):
+        # does plan_islands legitimately place >1 sizeable island in one
+        # child? (island clustering / mainland-share-first). Such a parent's
+        # children may be disconnected by design and are exempt below.
+        for group_atoms, _ in plan_islands(mesh, atoms, k, coupling, rng):
+            sub = mesh.adjacency[group_atoms][:, group_atoms]
+            _, comp = connected_components(sub, directed=False)
+            if int((np.bincount(comp) >= ISLET_MAX_ATOMS).sum()) > 1:
+                return True
+        return False
+
     for spec in specs:
         cap: dict = {}
         generate(spec, _capture=cap)
@@ -245,11 +257,16 @@ def test_low_level_units_contiguous():
         probe_rng = np.random.default_rng(0)
         for level in range(1, len(spec.levels)):
             counts = counts_by_level[level]
+            exempt: dict = {}
             for node in level_nodes[level]:
-                parent = level_nodes[level - 1][node["parent"]]
-                m = count_sizeable_islands(mesh, parent["atoms"], probe_rng)
-                if m > int(counts[node["parent"]]):
-                    continue  # sanctioned: quota-starved archipelago parent
+                pi = node["parent"]
+                if pi not in exempt:
+                    exempt[pi] = has_multi_island_group(
+                        mesh, level_nodes[level - 1][pi]["atoms"],
+                        int(counts[pi]), spec.count_coupling, probe_rng,
+                    )
+                if exempt[pi]:
+                    continue  # sanctioned: parent whose plan clusters islands
                 atoms = node["atoms"]
                 sub = mesh.adjacency[atoms][:, atoms]
                 n_comp, comp = connected_components(sub, directed=False)
@@ -284,9 +301,63 @@ def test_border_meander_changes_borders_only_when_on():
     assert j_on != json.dumps(w_off.geojson_dict(1), sort_keys=True)
 
 
+def test_border_roughness_wiggles_coarse_borders():
+    # border_roughness must visibly perturb even country-level borders, not
+    # just deep levels. Measured layout-independently as the length-weighted
+    # tortuosity (path length / straight-line span) of every shared border
+    # between sibling countries, pooled across seeds (a single world has too
+    # few country borders to be stable). meander is off so only roughness
+    # acts. Guards against the old per-edge noise, which was near-inert at
+    # this scale (long-path averaging + Lloyd re-smoothing).
+    from shapely.ops import linemerge
+
+    seeds = range(6)
+
+    def pooled_tortuosity(roughness):
+        tort, wt = [], []
+        for seed in seeds:
+            world = generate(WorldSpec(
+                levels=[6, 4], n_landmasses=3, resolution=10000, seed=seed,
+                border_meander=0.0, size_variance=0.0, count_variance=0.0,
+                border_roughness=roughness,
+            ))
+            units = world.units_at(0)
+            for i in range(len(units)):
+                for j in range(i + 1, len(units)):
+                    a, b = units[i].geometry, units[j].geometry
+                    if not a.intersects(b):
+                        continue
+                    shared = a.boundary.intersection(b.boundary)
+                    if shared.is_empty or shared.length == 0:
+                        continue
+                    if shared.geom_type == "LineString":
+                        lines = [shared]
+                    else:
+                        merged = linemerge(shared)
+                        lines = list(getattr(merged, "geoms", [merged]))
+                    for ln in lines:
+                        if ln.geom_type != "LineString" or len(ln.coords) < 2:
+                            continue
+                        p0, p1 = ln.coords[0], ln.coords[-1]
+                        span = np.hypot(p1[0] - p0[0], p1[1] - p0[1])
+                        if span < 1e-6:
+                            continue
+                        tort.append(ln.length / span)
+                        wt.append(ln.length)
+        tort, wt = np.array(tort), np.array(wt)
+        return float((tort * wt).sum() / wt.sum())
+
+    smooth = pooled_tortuosity(0.0)
+    rough = pooled_tortuosity(1.0)
+    assert rough > smooth * 1.1, f"roughness inert: {smooth:.3f} -> {rough:.3f}"
+
+
 def test_elevation_exported_and_coherent(tmp_path):
+    # roughness off so the coherent border-noise field doesn't compete with
+    # meander -- this test isolates the elevation-following (meander) effect
     spec = WorldSpec(levels=[4, 3], n_landmasses=2, coast_ruggedness=0.8,
-                     border_meander=1.0, resolution=8000, seed=41)
+                     border_meander=1.0, border_roughness=0.0, resolution=8000,
+                     seed=41)
     cap: dict = {}
     world = generate(spec, _capture=cap)
     for u in world.units:
