@@ -28,9 +28,13 @@ def region_grow(neighbors, sizes, targets, seeds, rng, field=None, lam=0.0):
     filled = np.zeros(K)
     frontier = [set() for _ in range(K)]
     link = [defaultdict(float) for _ in range(K)]
+    # Two-phase seeding: assign ALL seeds first, then build frontiers. This
+    # prevents a seed that is adjacent to another seed from being added to the
+    # earlier group's frontier and later "stolen" (reassigned).
     for g, s in enumerate(seeds):
         assign[s] = g
         filled[g] = sizes[s]
+    for g, s in enumerate(seeds):
         for nb, w in neighbors[s]:
             if assign[nb] == -1:
                 frontier[g].add(nb)

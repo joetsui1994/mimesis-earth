@@ -20,3 +20,45 @@ def test_region_grow_splits_path_in_half():
     assert (assign == 0).sum() == 3 and (assign == 1).sum() == 3
     # contiguous: group 0 is a prefix, group 1 a suffix
     assert assign.tolist() == [0, 0, 0, 1, 1, 1]
+
+
+def test_region_grow_balances_interior_seeds():
+    # interior seeds with room to grow; feed-most-behind should keep the two
+    # groups near-equal on a symmetric path. (Endpoint/adjacent seeds are a
+    # degenerate 1-D case no region-grower can balance and are not a target.)
+    nbr, sizes = path_graph(10)
+    assign = region_grow(nbr, sizes, np.array([5.0, 5.0]), [2, 7],
+                         np.random.default_rng(1))
+    a, b = (assign == 0).sum(), (assign == 1).sum()
+    assert abs(a - b) <= 2
+
+
+def test_region_grow_field_bias_puts_border_on_ridge():
+    # high field at item 5 (middle); border should form there (both groups avoid it)
+    nbr, sizes = path_graph(11)
+    field = np.zeros(11)
+    field[5] = 10.0
+    assign = region_grow(nbr, sizes, np.array([5.5, 5.5]), [0, 10],
+                         np.random.default_rng(2), field=field, lam=3.0)
+    # item 5 is a boundary item: it has a neighbor in the other group
+    left = assign[4]
+    right = assign[6]
+    assert left != right  # the ridge splits the two groups
+
+
+def test_region_grow_deterministic():
+    nbr, sizes = path_graph(20)
+    a = region_grow(nbr, sizes, np.array([10.0, 10.0]), [0, 19], np.random.default_rng(3))
+    b = region_grow(nbr, sizes, np.array([10.0, 10.0]), [0, 19], np.random.default_rng(3))
+    assert a.tolist() == b.tolist()
+
+
+def test_region_grow_straggler_guard_assigns_all():
+    # a "T": item 3 hangs off item 1; both seeds far. Every item must be assigned.
+    nbr = {0: [(1, 1.0)], 1: [(0, 1.0), (2, 1.0), (3, 1.0)],
+           2: [(1, 1.0)], 3: [(1, 1.0)]}
+    sizes = np.ones(4)
+    assign = region_grow(nbr, sizes, np.array([2.0, 2.0]), [0, 2],
+                         np.random.default_rng(4))
+    assert (assign >= 0).all()
+    assert set(assign.tolist()) == {0, 1}
