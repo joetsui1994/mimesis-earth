@@ -2,6 +2,9 @@ import type { Spec } from './api'
 
 const $ = (id: string) => document.getElementById(id) as HTMLInputElement
 
+// Reads only the known Spec fields below from the DOM; there is no
+// query-string/shared-link merging in this file, so no field-stripping
+// is needed for retired fields (count_coupling, count_variance).
 export function readSpec(): Spec {
   const levels = $('p-levels')
     .value.split(',')
@@ -15,8 +18,6 @@ export function readSpec(): Spec {
     land_fraction: parseFloat($('p-land').value),
     border_roughness: parseFloat($('p-borders').value),
     size_variance: parseFloat($('p-sizes').value),
-    count_coupling: parseFloat($('p-coupling').value),
-    count_variance: parseFloat($('p-counts').value),
     border_meander: parseFloat($('p-meander').value),
     total_population: parseInt($('p-pop').value, 10) || 50_000_000,
     resolution: parseInt($('p-res').value, 10) || 20_000,

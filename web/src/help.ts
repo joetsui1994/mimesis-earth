@@ -11,10 +11,6 @@ const HELP: Record<string, string> = {
     'Fine-scale wiggliness of internal borders (jitter at the smallest map scale).',
   'p-sizes':
     'Size inequality between units: 0 makes them evenly sized, higher values give a few sprawling giants among many small ones.',
-  'p-coupling':
-    'How strongly a territory’s subdivision count follows its size — high values give big countries many provinces and small ones few.',
-  'p-counts':
-    'Random variation in subdivision counts between parents. Per-level totals stay exact regardless.',
   'p-meander':
     'How strongly borders follow terrain ridges, wandering at large scales instead of running straight.',
   'p-pop':

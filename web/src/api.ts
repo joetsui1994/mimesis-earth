@@ -8,8 +8,6 @@ export interface Spec {
   land_fraction: number
   border_roughness: number
   size_variance: number
-  count_coupling: number
-  count_variance: number
   border_meander: number
   total_population: number
   resolution: number
