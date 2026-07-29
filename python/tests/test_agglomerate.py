@@ -83,3 +83,24 @@ def test_build_item_graph_adjacency_and_bridges():
     nb2, _ = build_item_graph(mesh, [np.array([a]), np.array([b])],
                               bridges=np.array([[a, b]]))
     assert nb2[0] == [(1, BRIDGE_EPS)]
+
+
+from scipy.sparse.csgraph import connected_components
+from mimesis_earth.agglomerate import leaf_partition
+from mimesis_earth.spec import MIN_ATOMS_PER_LEAF
+
+
+def test_leaf_partition_covers_and_meets_min():
+    mesh = build_mesh(6000, np.random.default_rng(11))
+    z = mesh.points[:, 2]
+    group = np.flatnonzero(z > 0.2)          # one big cap, connected
+    parts = leaf_partition(mesh, group, 20, roughness=0.5, size_variance=0.4,
+                           atom_cost=None, rng=np.random.default_rng(12))
+    assert len(parts) == 20
+    covered = np.sort(np.concatenate(parts))
+    np.testing.assert_array_equal(covered, np.sort(group))
+    assert all(len(p) >= MIN_ATOMS_PER_LEAF for p in parts)
+    # each part is a single connected blob (single island, contiguous)
+    for p in parts:
+        sub = mesh.adjacency[p][:, p]
+        assert connected_components(sub, directed=False)[0] == 1
