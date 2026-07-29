@@ -223,6 +223,23 @@ def test_invariants_across_spec_shapes():
         assert len({u.landmass for u in w.units_at(0)}) == spec.n_landmasses
 
 
+def test_no_sliver_leaf_districts():
+    # Every leaf district must be drawable: >= MIN_ATOMS_PER_LEAF atoms. The
+    # whole-group partition can emit tiny fragments; leaf_partition's sliver
+    # repair must eliminate them (tested on the real pipeline, including an
+    # archipelago-prone spec, not just a clean single island).
+    from mimesis_earth.spec import MIN_ATOMS_PER_LEAF
+    for spec in (
+        WorldSpec(levels=[6, 5, 6], n_landmasses=3, resolution=20000, seed=0),
+        WorldSpec(levels=[4, 4, 3], n_landmasses=3, coast_ruggedness=0.8,
+                  resolution=8000, seed=21),
+    ):
+        cap = {}
+        generate(spec, _capture=cap)
+        sizes = [len(node["atoms"]) for node in cap["level_nodes"][-1]]
+        assert min(sizes) >= MIN_ATOMS_PER_LEAF, (spec.seed, min(sizes))
+
+
 def test_leaf_districts_contiguous_over_bridges():
     # Districts are "contiguous by construction" over the partition graph, which
     # includes within-group bridges (so a district may span a small sea gap to

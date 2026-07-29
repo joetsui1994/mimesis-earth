@@ -133,8 +133,42 @@ def leaf_partition(mesh, group_atoms, n_districts, roughness, size_variance,
     noise) places leaf borders on ridges, which higher levels then inherit.
     """
     group_atoms = np.asarray(group_atoms)
-    return partition_atoms(mesh, group_atoms, n_districts, bridges, roughness, rng,
-                           size_variance=size_variance, atom_cost=atom_cost)
+    parts = partition_atoms(mesh, group_atoms, n_districts, bridges, roughness, rng,
+                            size_variance=size_variance, atom_cost=atom_cost)
+    return _repair_slivers(mesh, parts, roughness, size_variance, atom_cost, rng,
+                           bridges)
+
+
+def _repair_slivers(mesh, parts, roughness, size_variance, atom_cost, rng, bridges):
+    """Ensure no district is a non-drawable sliver (< MIN_ATOMS_PER_LEAF).
+
+    The weighted-Voronoi partition can emit tiny fragments. Each is merged into
+    its strongest-link neighbour and the largest district is re-split so the
+    count is preserved. Merges are always across an existing graph edge (mesh or
+    bridge), so contiguity is preserved. Bounded iterations; if the group is too
+    uniform to donate a split without creating a new sliver, it stops (rare)."""
+    parts = list(parts)
+    for _ in range(len(parts)):
+        sizes = [len(p) for p in parts]
+        s = int(np.argmin(sizes))
+        if sizes[s] >= MIN_ATOMS_PER_LEAF:
+            break
+        big = max((i for i in range(len(parts)) if i != s),
+                  key=lambda i: len(parts[i]))
+        if len(parts[big]) < 2 * MIN_ATOMS_PER_LEAF:
+            break  # nothing large enough to split back without a new sliver
+        neighbors, _ = build_item_graph(mesh, parts, bridges)
+        nbrs = neighbors.get(s, [])
+        if not nbrs:
+            break  # isolated sliver (no mesh/bridge link) -- leave it
+        tgt = max(nbrs, key=lambda nb: nb[1])[0]
+        parts[tgt] = np.concatenate([parts[tgt], parts[s]])
+        parts.pop(s)
+        big = int(np.argmax([len(p) for p in parts]))  # recompute after pop
+        sub = partition_atoms(mesh, parts[big], 2, bridges, roughness, rng,
+                              size_variance=size_variance, atom_cost=atom_cost)
+        parts[big:big + 1] = sub
+    return parts
 
 
 def allocate_group_counts(group_sizes, levels):
