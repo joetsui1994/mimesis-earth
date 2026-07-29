@@ -3,6 +3,7 @@
 import numpy as np
 import shapely
 
+from mimesis_earth.agglomerate import partition_world
 from mimesis_earth.attributes import population_density, round_preserving_sum
 from mimesis_earth.geometry import (
     PRECISION_GRID,
@@ -15,15 +16,6 @@ from mimesis_earth.landmask import build_landmask
 from mimesis_earth.mesh import build_mesh
 from mimesis_earth.naming import make_namer
 from mimesis_earth.noise import sphere_noise
-from mimesis_earth.partition import (
-    _island_analysis,
-    allocate_counts,
-    coupled_counts,
-    honor_minimums,
-    partition_atoms,
-    plan_islands,
-    redistribute_counts,
-)
 from mimesis_earth.spec import WorldSpec
 from mimesis_earth.world import Unit, World, _rfc7946
 
@@ -59,113 +51,35 @@ def generate(spec: WorldSpec, _capture: dict | None = None) -> World:
     rng = np.random.default_rng(spec.seed)
     mesh = build_mesh(spec.resolution, rng)
     mask = build_landmask(mesh, spec, rng)
-    # cost field: borders settle on cost crests (watersheds). Two additive
-    # contributions in the exponent, both multiplicative on edge weight:
-    #  - meander follows elevation crests, using the same field that defines
-    #    land/sea via landmask.py's sea-level quantile. z-score against
-    #    land-only elevation stats: atom_cost is only ever read on
-    #    land-restricted subgraphs (partition_atoms is always called with a
-    #    land/landmass atom subset), so normalizing against the full mesh --
-    #    which mixes in the sea's much lower, differently-distributed
-    #    elevation -- dilutes the std and washes out the contrast among land
-    #    atoms where it actually matters.
-    #  - roughness follows a coherent (spatially-correlated) random field.
-    #    This is deliberately NOT the per-edge i.i.d. noise in _subgraph:
-    #    that noise averages out over the long dijkstra paths that define
-    #    coarse units and is then re-smoothed by Lloyd, so it barely wiggles
-    #    country-scale borders however high it is set. A low-frequency
-    #    coherent field survives both, giving roughness real, scale-
-    #    independent effect. roughness is per-level, so the field is scaled
-    #    per level below.
+    # --- cost fields ------------------------------------------------------
     land_elevation = mask.elevation[mask.land]
     elev_z = (mask.elevation - land_elevation.mean()) / land_elevation.std()
-    # draw the coherent border field from an INDEPENDENT stream so it never
-    # perturbs the main rng sequence (seeds, variance, population, names).
-    # Consequence: border_roughness=0 reproduces the pre-field output exactly.
-    # base_freq is raised above the sphere_noise default so the dominant
-    # wavelength (~1/base_freq of the sphere) lands near country-border scale
-    # -- at the default it's a ~60deg lobe, larger than a country, so country
-    # borders sit inside one smooth lobe and stay near-straight.
-    border_field = sphere_noise(
+    # leaf-border texture (atom scale): elevation crests + coherent noise, clipped
+    leaf_noise = sphere_noise(
         mesh.points, np.random.default_rng([spec.seed, 0xB0DE]),
         octaves=BORDER_NOISE_OCTAVES, base_freq=BORDER_NOISE_FREQ,
         persistence=BORDER_NOISE_PERSISTENCE,
     )
-    roughness = spec.border_roughness_per_level()
+    atom_cost = np.exp(np.clip(
+        1.5 * spec.border_meander * elev_z
+        + BORDER_NOISE_COST * spec.border_roughness * leaf_noise,
+        -COST_EXPONENT_CLIP, COST_EXPONENT_CLIP,
+    ))
+    # macro ridge field for region-grow bias: low frequency so borders wander at
+    # country scale; elevation term makes meander propagate to higher levels.
+    grow_noise = sphere_noise(
+        mesh.points, np.random.default_rng([spec.seed, 0x6600]),
+        octaves=3, base_freq=4.0, persistence=0.7,
+    )
+    grow_field = spec.border_meander * elev_z + spec.border_roughness * grow_noise
 
-    def atom_cost_for(level: int) -> np.ndarray:
-        expo = (
-            1.5 * spec.border_meander * elev_z
-            + BORDER_NOISE_COST * roughness[level] * border_field
-        )
-        return np.exp(np.clip(expo, -COST_EXPONENT_CLIP, COST_EXPONENT_CLIP))
-
+    # --- bottom-up partition ---------------------------------------------
+    level_nodes = partition_world(mesh, mask, spec, atom_cost, grow_field, rng)
     n_levels = len(spec.levels)
-
-    # --- partition atoms level by level ---------------------------------
-    # each entry: {"atoms": ndarray, "parent": index into previous level or None,
-    #              "landmass": int (level 0 only)}
-    level_nodes: list[list[dict]] = []
-    group_sizes = np.array(
-        [(mask.group == g).sum() for g in range(spec.n_landmasses)], dtype=float
-    )
-    counts0 = redistribute_counts(
-        allocate_counts(spec.levels[0], group_sizes**spec.count_coupling),
-        group_sizes.astype(int),
-    )
-    top: list[dict] = []
-    for g in range(spec.n_landmasses):
-        idx = np.flatnonzero(mask.group == g)
-        parts = partition_atoms(
-            mesh, idx, int(counts0[g]), mask.bridges, roughness[0], rng,
-            size_variance=spec.size_variance, atom_cost=atom_cost_for(0),
-        )
-        for atoms in parts:
-            top.append({"atoms": atoms, "parent": None, "landmass": g})
-    level_nodes.append(top)
-
-    counts_by_level: list = [None] * n_levels
-    for level in range(1, n_levels):
-        prev = level_nodes[level - 1]
-        parent_sizes = np.array([len(p["atoms"]) for p in prev], dtype=float)
-        level_total = spec.levels[level] * len(prev)
-        counts = coupled_counts(
-            level_total, parent_sizes, spec.count_coupling,
-            spec.count_variance, rng,
-        )
-        capacities = parent_sizes.astype(int)
-        counts = redistribute_counts(counts, capacities)
-        # island-rich parents need enough children for one per island where
-        # the level total allows; shortfalls degrade to island clustering.
-        # Run the island analysis once per parent and reuse it below for the
-        # actual split, instead of recomputing it inside plan_islands.
-        analyses = [_island_analysis(mesh, p["atoms"], rng) for p in prev]
-        minimums = np.array(
-            [min(len(a[3]), int(capacities[i])) for i, a in enumerate(analyses)]
-        )
-        counts = honor_minimums(counts, minimums)
-        assert counts.sum() == level_total
-        assert (counts >= 1).all() and (counts <= capacities).all()
-        counts_by_level[level] = counts
-        current: list[dict] = []
-        for parent_index, parent in enumerate(prev):
-            k = int(counts[parent_index])
-            for group_atoms, group_k in plan_islands(
-                mesh, parent["atoms"], k, spec.count_coupling, rng,
-                analysis=analyses[parent_index],
-            ):
-                parts = partition_atoms(
-                    mesh, group_atoms, group_k, None, roughness[level], rng,
-                    size_variance=spec.size_variance, atom_cost=atom_cost_for(level),
-                )
-                for atoms in parts:
-                    current.append({"atoms": atoms, "parent": parent_index})
-        level_nodes.append(current)
 
     if _capture is not None:
         _capture["mesh"] = mesh
         _capture["level_nodes"] = level_nodes
-        _capture["counts_by_level"] = counts_by_level
         _capture["elevation"] = mask.elevation
 
     # --- population on leaves --------------------------------------------
