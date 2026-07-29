@@ -238,6 +238,12 @@ export class Globe {
       .rotate([this.rotation[0], this.rotation[1], 0])
     const path = geoPath(this.projection, ctx)
 
+    // Stroke widths are constant screen pixels, so when zoomed out the globe
+    // shrinks but borders don't -- densely-spaced borders crush into a thick
+    // bunched mass. Thin the strokes toward the globe's rendered size when
+    // zooming out; cap at 1 so the zoomed-in appearance is unchanged.
+    const lw = Math.min(1, Math.sqrt(this.zoomFactor))
+
     ctx.save()
     ctx.scale(this.dpr, this.dpr)
     ctx.clearRect(0, 0, this.width, this.height)
@@ -253,7 +259,7 @@ export class Globe {
     ctx.beginPath()
     path(geoGraticule10())
     ctx.strokeStyle = GRID
-    ctx.lineWidth = 0.5
+    ctx.lineWidth = 0.5 * lw
     ctx.stroke()
 
     // land units — draw the winding-reversed collection so d3-geo fills the
@@ -270,7 +276,7 @@ export class Globe {
       // strokes come from seam-filtered boundary lines so the antimeridian
       // cut is never drawn as a border
       ctx.strokeStyle = INK
-      ctx.lineWidth = 0.7
+      ctx.lineWidth = 0.7 * lw
       for (const b of this.boundaries) {
         ctx.beginPath()
         path(b)
@@ -281,7 +287,7 @@ export class Globe {
         ctx.beginPath()
         path(this.boundaries[this.selectedIndex])
         ctx.strokeStyle = HILITE_EDGE
-        ctx.lineWidth = 1.6
+        ctx.lineWidth = 1.6 * lw
         ctx.stroke()
       }
     }
@@ -290,7 +296,7 @@ export class Globe {
     ctx.beginPath()
     path({ type: 'Sphere' })
     ctx.strokeStyle = INK
-    ctx.lineWidth = 1.4
+    ctx.lineWidth = 1.4 * lw
     ctx.stroke()
     ctx.restore()
   }
