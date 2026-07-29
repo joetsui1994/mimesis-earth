@@ -12,6 +12,7 @@ export function readSpec(): Spec {
     n_landmasses: parseInt($('p-islands').value, 10) || 3,
     spread: parseFloat($('p-spread').value),
     coast_ruggedness: parseFloat($('p-coast').value),
+    land_fraction: parseFloat($('p-land').value),
     border_roughness: parseFloat($('p-borders').value),
     size_variance: parseFloat($('p-sizes').value),
     count_coupling: parseFloat($('p-coupling').value),
