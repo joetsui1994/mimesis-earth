@@ -186,3 +186,88 @@ def allocate_group_counts(group_sizes, levels):
             f"resolution or land_fraction, or lower spread."
         )
     return C, D
+
+
+def _item_field(grow_field, parts):
+    """Mean grow_field over each part's atoms."""
+    return np.array([float(grow_field[p].mean()) for p in parts])
+
+
+def _grow_targets(total_mass, k, size_variance, rng):
+    if size_variance <= 0:
+        return np.full(k, total_mass / k)
+    w = rng.lognormal(0.0, size_variance, size=k)
+    return total_mass * w / w.sum()
+
+
+def partition_world(mesh, mask, spec, atom_cost, grow_field, rng):
+    """Bottom-up partition. Returns level_nodes: list per level of
+    dicts {atoms, parent, landmass}. Leaves are districts; parents set by
+    field-biased region-grow. See design spec Components 1-4."""
+    levels = spec.levels
+    n_levels = len(levels)
+    roughness = float(spec.border_roughness)
+    lam = GROW_BIAS * roughness
+    group_sizes = np.array(
+        [(mask.group == g).sum() for g in range(spec.n_landmasses)], dtype=float
+    )
+    C, D = allocate_group_counts(group_sizes, levels)
+
+    level_nodes = [[] for _ in range(n_levels)]
+
+    for g in range(spec.n_landmasses):
+        group_atoms = np.flatnonzero(mask.group == g)
+        # per-level counts for this group (index 0 = countries ... last = leaves)
+        cnt = [int(C[g])]
+        for lvl in range(1, n_levels):
+            cnt.append(cnt[-1] * levels[lvl])
+
+        # --- leaves (finest level) ---
+        leaves = leaf_partition(mesh, group_atoms, cnt[-1], roughness,
+                                spec.size_variance, atom_cost, rng)
+
+        # --- agglomerate upward: parts[level] = list of atom arrays;
+        #     parent_of[level][i] = index into parts[level-1] within this group.
+        parts = [None] * n_levels
+        parent_of = [None] * n_levels
+        parts[n_levels - 1] = leaves
+        for lvl in range(n_levels - 2, -1, -1):
+            child_parts = parts[lvl + 1]
+            neighbors, sizes = build_item_graph(mesh, child_parts, bridges=mask.bridges)
+            field = _item_field(grow_field, child_parts)
+            k = cnt[lvl]
+            cent = np.array([mesh.points[p].mean(0) for p in child_parts])
+            cent /= np.linalg.norm(cent, axis=1, keepdims=True)
+            seeds = _fps(cent, k)
+            targets = _grow_targets(sizes.sum(), k, spec.size_variance, rng)
+            assign = region_grow(neighbors, sizes, targets, seeds, rng,
+                                 field=field, lam=lam)
+            parts[lvl] = [
+                np.concatenate([child_parts[i] for i in np.flatnonzero(assign == c)])
+                for c in range(k)
+            ]
+            parent_of[lvl + 1] = assign  # child level -> its parent index (this level)
+
+        # --- append to global level_nodes with per-group parent offsets ---
+        base = [len(level_nodes[lvl]) for lvl in range(n_levels)]
+        for lvl in range(n_levels):
+            for i, atoms in enumerate(parts[lvl]):
+                node = {"atoms": atoms, "landmass": g if lvl == 0 else None}
+                if lvl == 0:
+                    node["parent"] = None
+                else:
+                    node["parent"] = base[lvl - 1] + int(parent_of[lvl][i])
+                level_nodes[lvl].append(node)
+
+    return level_nodes
+
+
+def _fps(points, k):
+    """Farthest-point sampling: k well-spread indices into points."""
+    chosen = [0]
+    d = np.linalg.norm(points - points[0], axis=1)
+    while len(chosen) < k:
+        nxt = int(d.argmax())
+        chosen.append(nxt)
+        d = np.minimum(d, np.linalg.norm(points - points[nxt], axis=1))
+    return chosen

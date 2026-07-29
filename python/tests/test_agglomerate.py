@@ -124,3 +124,39 @@ def test_allocate_group_counts_infeasible_raises():
     import pytest
     with pytest.raises(ValueError, match="too small"):
         allocate_group_counts(group_sizes, [6, 5, 6])
+
+
+from mimesis_earth.spec import WorldSpec
+from mimesis_earth.mesh import build_mesh as _bm
+from mimesis_earth.landmask import build_landmask
+from mimesis_earth.agglomerate import partition_world
+
+
+def _small_world_inputs(seed=0):
+    spec = WorldSpec(n_landmasses=2, levels=[2, 3, 3], resolution=8000,
+                     land_fraction=0.4, seed=seed)
+    rng = np.random.default_rng(seed)
+    mesh = _bm(spec.resolution, rng)
+    mask = build_landmask(mesh, spec, rng)
+    grow = np.zeros(len(mesh.points))
+    return spec, mesh, mask, grow, rng
+
+
+def test_partition_world_shape_and_nesting():
+    spec, mesh, mask, grow, rng = _small_world_inputs()
+    level_nodes = partition_world(mesh, mask, spec, atom_cost=None,
+                                  grow_field=grow, rng=rng)
+    assert len(level_nodes) == 3
+    assert len(level_nodes[0]) == 2          # levels[0] countries total
+    assert len(level_nodes[1]) == 2 * 3      # provinces total
+    assert len(level_nodes[2]) == 2 * 3 * 3  # districts total
+    # every district's atoms are non-empty and disjoint; union = all land
+    all_atoms = np.sort(np.concatenate([n["atoms"] for n in level_nodes[2]]))
+    land = np.sort(np.flatnonzero(mask.land))
+    np.testing.assert_array_equal(all_atoms, land)
+    # parent indices are valid and children tile parents
+    for lvl in (1, 2):
+        for node in level_nodes[lvl]:
+            assert 0 <= node["parent"] < len(level_nodes[lvl - 1])
+    # level-0 nodes carry landmass id
+    assert all(n["landmass"] is not None for n in level_nodes[0])
