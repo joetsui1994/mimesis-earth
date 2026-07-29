@@ -62,3 +62,24 @@ def test_region_grow_straggler_guard_assigns_all():
                          np.random.default_rng(4))
     assert (assign >= 0).all()
     assert set(assign.tolist()) == {0, 1}
+
+
+from mimesis_earth.mesh import build_mesh
+from mimesis_earth.agglomerate import build_item_graph, BRIDGE_EPS
+
+
+def test_build_item_graph_adjacency_and_bridges():
+    mesh = build_mesh(2000, np.random.default_rng(10))
+    # two parts: northern cap and everything else
+    z = mesh.points[:, 2]
+    north = np.flatnonzero(z > 0.5)
+    rest = np.flatnonzero(z <= 0.5)
+    neighbors, sizes = build_item_graph(mesh, [north, rest])
+    assert len(sizes) == 2 and sizes[0] == len(north)
+    # the two parts touch, so they are neighbors with weight > BRIDGE_EPS
+    assert any(j == 1 and w > BRIDGE_EPS for j, w in neighbors[0])
+    # a bridge adds a low-weight link between two otherwise-disjoint parts
+    a, b = int(north[0]), int(rest[0])
+    nb2, _ = build_item_graph(mesh, [np.array([a]), np.array([b])],
+                              bridges=np.array([[a, b]]))
+    assert nb2[0] == [(1, BRIDGE_EPS)]

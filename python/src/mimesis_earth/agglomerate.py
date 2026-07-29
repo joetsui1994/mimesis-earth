@@ -86,3 +86,32 @@ def _attach_stragglers(neighbors, assign):
                 "region_grow: items isolated from all seeds "
                 f"({len(stragglers)} left) -- disconnected item graph"
             )
+
+
+def build_item_graph(mesh, parts, bridges=None):
+    """Adjacency over 'parts' (lists of atom indices). Edge weight = summed
+    shared-border arc length. Bridge atom-pairs add BRIDGE_EPS links so
+    across-water neighbors are reachable but eaten last."""
+    lab = np.full(len(mesh.points), -1)
+    for i, p in enumerate(parts):
+        lab[p] = i
+    e = mesh.edges
+    a_all, b_all = lab[e[:, 0]], lab[e[:, 1]]
+    m = (a_all >= 0) & (b_all >= 0) & (a_all != b_all)
+    a, b = a_all[m], b_all[m]
+    w = np.arccos(
+        np.clip(np.sum(mesh.points[e[m, 0]] * mesh.points[e[m, 1]], axis=1), -1, 1)
+    )
+    nbr = defaultdict(lambda: defaultdict(float))
+    for i, j, ww in zip(a.tolist(), b.tolist(), w.tolist()):
+        nbr[i][j] += ww
+        nbr[j][i] += ww
+    if bridges is not None and len(bridges):
+        ba, bb = lab[bridges[:, 0]], lab[bridges[:, 1]]
+        bm = (ba >= 0) & (bb >= 0) & (ba != bb)
+        for i, j in zip(ba[bm].tolist(), bb[bm].tolist()):
+            nbr[i][j] += BRIDGE_EPS
+            nbr[j][i] += BRIDGE_EPS
+    neighbors = {i: [(j, ww) for j, ww in nbr[i].items()] for i in range(len(parts))}
+    sizes = np.array([len(p) for p in parts], dtype=float)
+    return neighbors, sizes
