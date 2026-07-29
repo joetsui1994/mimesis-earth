@@ -98,9 +98,13 @@ def region_grow(neighbors, sizes, targets, seeds, rng, field=None, lam=0.0):
     filled = np.zeros(K)
     frontier = [set() for _ in range(K)]
     link = [defaultdict(float) for _ in range(K)]
+    # Two-phase seeding: assign ALL seeds first, then build frontiers. This
+    # prevents a seed that is adjacent to another seed from being added to the
+    # earlier group's frontier and later "stolen" (reassigned).
     for g, s in enumerate(seeds):
         assign[s] = g
         filled[g] = sizes[s]
+    for g, s in enumerate(seeds):
         for nb, w in neighbors[s]:
             if assign[nb] == -1:
                 frontier[g].add(nb)
@@ -178,13 +182,15 @@ git commit -m "feat: region_grow primitive (plain, contiguous by construction)"
 ```python
 # append to python/tests/test_agglomerate.py
 
-def test_region_grow_balances_uneven_seeds():
-    # feed-most-behind should keep groups near equal even with adjacent seeds
+def test_region_grow_balances_interior_seeds():
+    # interior seeds with room to grow; feed-most-behind should keep the two
+    # groups near-equal on a symmetric path. (Endpoint/adjacent seeds are a
+    # degenerate 1-D case no region-grower can balance and are not a target.)
     nbr, sizes = path_graph(10)
-    assign = region_grow(nbr, sizes, np.array([5.0, 5.0]), [0, 1],
+    assign = region_grow(nbr, sizes, np.array([5.0, 5.0]), [2, 7],
                          np.random.default_rng(1))
     a, b = (assign == 0).sum(), (assign == 1).sum()
-    assert abs(a - b) <= 2  # roughly balanced despite seeds being neighbors
+    assert abs(a - b) <= 2
 
 
 def test_region_grow_field_bias_puts_border_on_ridge():

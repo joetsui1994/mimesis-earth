@@ -352,3 +352,28 @@ version bump documents the break.
   (∝ `border_roughness`) was the measured sweet spot — tune during implementation
   and re-measure macro tortuosity + contiguity.
 - **Visual validation** at max settings before calling it done.
+
+## Implementation deviations (recorded post-build)
+
+Two design details changed during implementation, surfaced by the review loop:
+
+- **Leaf partition is whole-group, not per-island.** Component 2's per-island
+  split + clustering gave the mainland only one district when a group had ~as
+  many islands as districts (mainland-hog at the leaf level) and lost the
+  `atom_cost` crest-following. `leaf_partition` now runs a single
+  `partition_atoms` over the whole group **with within-group bridges** (small
+  islands absorbed via bridge; mainland subdivided; meander restored), followed
+  by a **count-preserving sliver-repair** pass (merge any sub-`MIN_ATOMS_PER_LEAF`
+  district into its strongest-link neighbour, re-split the largest) so the
+  "every district ≥ MIN" guarantee holds. `redistribute_counts` is still kept
+  (used by `allocate_group_counts`).
+- **Region-grow bias `lam` is the constant `GROW_BIAS`, not `GROW_BIAS * roughness`.**
+  `grow_field` already scales with both knobs; multiplying by roughness again
+  zeroed meander's macro effect when roughness=0. Constant `lam` lets
+  `border_meander` bend macro borders on its own (matches the validated prototype).
+- **`scripts/prebake.py`** curated specs were updated to drop the retired
+  `count_coupling`/`count_variance` fields (add to the "Removed" surface).
+
+Final acceptance on the real pipeline (6 seeds, res 20000): interior
+country-border macro tortuosity **1.93** (≥1.60), country area CV **0.25**
+(≤0.45), 0 sliver leaves; full test suite green (114).
