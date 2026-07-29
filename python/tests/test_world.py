@@ -11,7 +11,6 @@ SPEC = WorldSpec(
     levels=[4, 3, 3],
     n_landmasses=2,
     resolution=6000,
-    count_variance=0.0,
     seed=7,
 )
 
@@ -204,7 +203,7 @@ def test_exported_ring_winding(tmp_path, world):
 def test_invariants_across_spec_shapes():
     specs = [
         WorldSpec(levels=[12], n_landmasses=4, resolution=6000, seed=3),
-        WorldSpec(levels=[6, 5], count_variance=0.5, resolution=6000, seed=4),
+        WorldSpec(levels=[6, 5], resolution=6000, seed=4),
         WorldSpec(
             levels=[4, 3, 2], n_landmasses=1, spread=1.0,
             coast_ruggedness=1.0, resolution=6000, seed=5,
@@ -214,72 +213,35 @@ def test_invariants_across_spec_shapes():
         w = generate(spec)
         for u in w.units:
             assert u.geometry.is_valid and not u.geometry.is_empty, (spec.seed, u.id)
-        if spec.count_variance == 0:
-            expected = 1
-            for level, c in enumerate(spec.levels):
-                expected *= c
-                assert len(w.units_at(level)) == expected, (spec.seed, level)
+        # counts are always exact under the bottom-up partitioner
+        expected = 1
+        for level, c in enumerate(spec.levels):
+            expected *= c
+            assert len(w.units_at(level)) == expected, (spec.seed, level)
         leaves = w.units_at(len(spec.levels) - 1)
         assert sum(u.population for u in leaves) == spec.total_population
         assert len({u.landmass for u in w.units_at(0)}) == spec.n_landmasses
 
 
-def test_low_level_units_contiguous():
+def test_every_leaf_is_contiguous():
     from scipy.sparse.csgraph import connected_components
-
-    from mimesis_earth.partition import ISLET_MAX_ATOMS, plan_islands
-
-    specs = [
-        WorldSpec(levels=[4, 4, 3], n_landmasses=3, coast_ruggedness=0.8,
-                  resolution=8000, seed=21),
-        # archipelago-heavy: actually starves quota (4 quota-starved parents
-        # at seed 7, measured), so the exemption branch below is exercised
-        WorldSpec(levels=[6, 2, 2], n_landmasses=6, coast_ruggedness=1.0,
-                  spread=1.0, resolution=10000, land_fraction=0.12, seed=7),
-    ]
-
-    def has_multi_island_group(mesh, atoms, k, coupling, rng):
-        # does plan_islands legitimately place >1 sizeable island in one
-        # child? (island clustering / mainland-share-first). Such a parent's
-        # children may be disconnected by design and are exempt below.
-        for group_atoms, _ in plan_islands(mesh, atoms, k, coupling, rng):
-            sub = mesh.adjacency[group_atoms][:, group_atoms]
-            _, comp = connected_components(sub, directed=False)
-            if int((np.bincount(comp) >= ISLET_MAX_ATOMS).sum()) > 1:
-                return True
-        return False
-
-    for spec in specs:
-        cap: dict = {}
+    for spec in (
+        WorldSpec(levels=[4, 4, 3], n_landmasses=3, resolution=8000, seed=21),
+        WorldSpec(levels=[6, 2, 2], n_landmasses=4, resolution=8000,
+                  land_fraction=0.35, seed=7),
+    ):
+        cap = {}
         generate(spec, _capture=cap)
         mesh, level_nodes = cap["mesh"], cap["level_nodes"]
-        counts_by_level = cap["counts_by_level"]
-        probe_rng = np.random.default_rng(0)
-        for level in range(1, len(spec.levels)):
-            counts = counts_by_level[level]
-            exempt: dict = {}
-            for node in level_nodes[level]:
-                pi = node["parent"]
-                if pi not in exempt:
-                    exempt[pi] = has_multi_island_group(
-                        mesh, level_nodes[level - 1][pi]["atoms"],
-                        int(counts[pi]), spec.count_coupling, probe_rng,
-                    )
-                if exempt[pi]:
-                    continue  # sanctioned: parent whose plan clusters islands
-                atoms = node["atoms"]
-                sub = mesh.adjacency[atoms][:, atoms]
-                n_comp, comp = connected_components(sub, directed=False)
-                sizes = np.bincount(comp)
-                assert (sizes >= ISLET_MAX_ATOMS).sum() <= 1, (
-                    spec.seed, level, len(atoms), sorted(sizes.tolist()),
-                )
+        for node in level_nodes[-1]:            # leaf districts
+            atoms = node["atoms"]
+            sub = mesh.adjacency[atoms][:, atoms]
+            assert connected_components(sub, directed=False)[0] == 1, spec.seed
 
 
 def test_exact_totals_at_any_variance_and_coupled_counts_vary():
     spec = WorldSpec(
-        levels=[5, 4, 4], count_variance=0.8, count_coupling=1.0,
-        resolution=8000, seed=23,
+        levels=[5, 4, 4], resolution=8000, seed=23,
     )
     world = generate(spec)
     assert len(world.units_at(0)) == 5
@@ -318,7 +280,7 @@ def test_border_roughness_wiggles_coarse_borders():
         for seed in seeds:
             world = generate(WorldSpec(
                 levels=[6, 4], n_landmasses=3, resolution=10000, seed=seed,
-                border_meander=0.0, size_variance=0.0, count_variance=0.0,
+                border_meander=0.0, size_variance=0.0,
                 border_roughness=roughness,
             ))
             units = world.units_at(0)
