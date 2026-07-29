@@ -104,3 +104,23 @@ def test_leaf_partition_covers_and_meets_min():
     for p in parts:
         sub = mesh.adjacency[p][:, p]
         assert connected_components(sub, directed=False)[0] == 1
+
+
+from mimesis_earth.agglomerate import allocate_group_counts
+
+
+def test_allocate_group_counts_exact_and_feasible():
+    # 3 groups, sizes 1000/500/300; levels [6,5,6]; MIN 8
+    group_sizes = np.array([1000.0, 500.0, 300.0])
+    C, D = allocate_group_counts(group_sizes, [6, 5, 6])
+    assert C.sum() == 6 and (C >= 1).all()
+    # D_g = C_g * 5 * 6
+    assert (D == C * 30).all()
+
+
+def test_allocate_group_counts_infeasible_raises():
+    # tiny third group cannot host 1 country * 5 * 6 * 8 = 240 atoms
+    group_sizes = np.array([5000.0, 5000.0, 100.0])
+    import pytest
+    with pytest.raises(ValueError, match="too small"):
+        allocate_group_counts(group_sizes, [6, 5, 6])

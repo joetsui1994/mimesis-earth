@@ -1,6 +1,7 @@
 # python/src/mimesis_earth/agglomerate.py
 """Bottom-up agglomeration: leaf districts -> provinces -> countries."""
 
+import math
 from collections import defaultdict
 
 import numpy as np
@@ -163,3 +164,25 @@ def leaf_partition(mesh, group_atoms, n_districts, roughness, size_variance,
                                 size_variance=size_variance, atom_cost=atom_cost)
             )
     return districts
+
+
+def allocate_group_counts(group_sizes, levels):
+    """Countries per landmass group (proportional to size, each >= 1) and the
+    derived leaf-district count per group (C_g * prod(levels[1:])). Raises if a
+    group is too small to host D_g * MIN_ATOMS_PER_LEAF atoms (review L)."""
+    group_sizes = np.asarray(group_sizes, dtype=float)
+    C = redistribute_counts(
+        allocate_counts(levels[0], group_sizes), group_sizes.astype(int)
+    )
+    leaves_per_country = math.prod(levels[1:]) if len(levels) > 1 else 1
+    D = C * leaves_per_country
+    need = D * MIN_ATOMS_PER_LEAF
+    if (group_sizes < need).any():
+        g = int(np.flatnonzero(group_sizes < need)[0])
+        raise ValueError(
+            f"landmass group {g} is too small: has {int(group_sizes[g])} atoms, "
+            f"needs >= {int(need[g])} for {int(D[g])} districts at "
+            f"MIN_ATOMS_PER_LEAF={MIN_ATOMS_PER_LEAF}. Lower n_landmasses, raise "
+            f"resolution or land_fraction, or lower spread."
+        )
+    return C, D
