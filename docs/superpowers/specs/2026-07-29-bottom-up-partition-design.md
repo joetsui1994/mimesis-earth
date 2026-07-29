@@ -364,9 +364,10 @@ Two design details changed during implementation, surfaced by the review loop:
   `partition_atoms` over the whole group **with within-group bridges** (small
   islands absorbed via bridge; mainland subdivided; meander restored), followed
   by a **count-preserving sliver-repair** pass (merge any sub-`MIN_ATOMS_PER_LEAF`
-  district into its strongest-link neighbour, re-split the largest) so the
-  "every district ≥ MIN" guarantee holds. `redistribute_counts` is still kept
-  (used by `allocate_group_counts`).
+  district into its strongest-link neighbour, re-split the largest) that pushes
+  districts toward `MIN_ATOMS_PER_LEAF` on a **best-effort** basis. At very low
+  resolution a group can hold fewer atoms than `n_districts * MIN`, so the pass
+  cannot always reach the floor; it degrades gracefully rather than raising.
 - **Region-grow bias `lam` is the constant `GROW_BIAS`, not `GROW_BIAS * roughness`.**
   `grow_field` already scales with both knobs; multiplying by roughness again
   zeroed meander's macro effect when roughness=0. Constant `lam` lets

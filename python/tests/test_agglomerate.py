@@ -33,17 +33,22 @@ def test_region_grow_balances_interior_seeds():
     assert abs(a - b) <= 2
 
 
-def test_region_grow_field_bias_puts_border_on_ridge():
-    # high field at item 5 (middle); border should form there (both groups avoid it)
-    nbr, sizes = path_graph(11)
-    field = np.zeros(11)
-    field[5] = 10.0
-    assign = region_grow(nbr, sizes, np.array([5.5, 5.5]), [0, 10],
-                         np.random.default_rng(2), field=field, lam=3.0)
-    # item 5 is a boundary item: it has a neighbor in the other group
-    left = assign[4]
-    right = assign[6]
-    assert left != right  # the ridge splits the two groups
+def test_region_grow_field_bias_avoids_ridge_items():
+    # Diamond: seeds 0 and 3; two middle items 1 (low field) and 2 (high field),
+    # each touching both seeds. On a symmetric graph balance alone can't decide
+    # which middle item goes where -- the field must. With the bias, the growing
+    # group eats the LOW-field item and the HIGH-field item lands on the border
+    # (the other group), and this must hold for ANY rng (field dominates the
+    # tiny tie-break). A no-op field would make the split rng-dependent.
+    nbr = {0: [(1, 1.0), (2, 1.0)], 1: [(0, 1.0), (3, 1.0)],
+           2: [(0, 1.0), (3, 1.0)], 3: [(1, 1.0), (2, 1.0)]}
+    sizes = np.ones(4)
+    field = np.array([0.0, 0.0, 10.0, 0.0])  # item 2 is the ridge
+    for trial in range(5):
+        assign = region_grow(nbr, sizes, np.array([2.0, 2.0]), [0, 3],
+                             np.random.default_rng(trial), field=field, lam=3.0)
+        assert assign[1] == assign[0]   # low-field item absorbed by seed 0's group
+        assert assign[2] == assign[3]   # high-field item pushed onto the border
 
 
 def test_region_grow_deterministic():
@@ -53,15 +58,24 @@ def test_region_grow_deterministic():
     assert a.tolist() == b.tolist()
 
 
-def test_region_grow_straggler_guard_assigns_all():
-    # a "T": item 3 hangs off item 1; both seeds far. Every item must be assigned.
-    nbr = {0: [(1, 1.0)], 1: [(0, 1.0), (2, 1.0), (3, 1.0)],
-           2: [(1, 1.0)], 3: [(1, 1.0)]}
+def test_region_grow_raises_on_disconnected_graph():
+    # The straggler guard's real job: an item with no path to any seed cannot be
+    # assigned, so region_grow must RAISE rather than silently drop it (which
+    # would violate the contiguity/coverage invariant). Here {0,1} holds the only
+    # seed and {2,3} is a separate component.
+    import pytest
+    nbr = {0: [(1, 1.0)], 1: [(0, 1.0)], 2: [(3, 1.0)], 3: [(2, 1.0)]}
     sizes = np.ones(4)
-    assign = region_grow(nbr, sizes, np.array([2.0, 2.0]), [0, 2],
+    with pytest.raises(RuntimeError):
+        region_grow(nbr, sizes, np.array([2.0]), [0], np.random.default_rng(4))
+
+
+def test_region_grow_covers_connected_graph():
+    # sanity: on a connected graph every item is assigned to a valid group
+    nbr, sizes = path_graph(8)
+    assign = region_grow(nbr, sizes, np.array([4.0, 4.0]), [0, 7],
                          np.random.default_rng(4))
-    assert (assign >= 0).all()
-    assert set(assign.tolist()) == {0, 1}
+    assert (assign >= 0).all() and set(assign.tolist()) == {0, 1}
 
 
 from mimesis_earth.mesh import build_mesh

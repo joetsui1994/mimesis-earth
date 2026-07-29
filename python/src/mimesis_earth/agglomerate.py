@@ -6,7 +6,7 @@ from collections import defaultdict
 
 import numpy as np
 
-from mimesis_earth.partition import allocate_counts, partition_atoms, redistribute_counts
+from mimesis_earth.partition import allocate_counts, partition_atoms
 from mimesis_earth.spec import MIN_ATOMS_PER_LEAF
 
 BRIDGE_EPS = 1e-6   # link weight for cross-water bridge edges
@@ -140,15 +140,20 @@ def leaf_partition(mesh, group_atoms, n_districts, roughness, size_variance,
 
 
 def _repair_slivers(mesh, parts, roughness, size_variance, atom_cost, rng, bridges):
-    """Ensure no district is a non-drawable sliver (< MIN_ATOMS_PER_LEAF).
+    """Reduce non-drawable sliver districts (< MIN_ATOMS_PER_LEAF) -- best effort.
 
     The weighted-Voronoi partition can emit tiny fragments. Each is merged into
     its strongest-link neighbour and the largest district is re-split so the
     count is preserved. Merges are always across an existing graph edge (mesh or
-    bridge), so contiguity is preserved. Bounded iterations; if the group is too
-    uniform to donate a split without creating a new sliver, it stops (rare)."""
+    bridge), so contiguity is preserved. This reliably clears degenerate slivers
+    at normal resolution; at low resolution / very fine subdivision a few
+    near-MIN districts can remain, since exact-count and per-district-minimum
+    cannot both be guaranteed when partition_atoms itself doesn't respect the
+    floor. Exact count always wins."""
     parts = list(parts)
     for _ in range(len(parts)):
+        if len(parts) < 2:
+            break  # a lone district can't be repaired against a neighbour
         sizes = [len(p) for p in parts]
         s = int(np.argmin(sizes))
         if sizes[s] >= MIN_ATOMS_PER_LEAF:
@@ -174,11 +179,9 @@ def _repair_slivers(mesh, parts, roughness, size_variance, atom_cost, rng, bridg
 def allocate_group_counts(group_sizes, levels):
     """Countries per landmass group (proportional to size, each >= 1) and the
     derived leaf-district count per group (C_g * prod(levels[1:])). Raises if a
-    group is too small to host D_g * MIN_ATOMS_PER_LEAF atoms (review L)."""
+    group is too small to host D_g * MIN_ATOMS_PER_LEAF atoms."""
     group_sizes = np.asarray(group_sizes, dtype=float)
-    C = redistribute_counts(
-        allocate_counts(levels[0], group_sizes), group_sizes.astype(int)
-    )
+    C = allocate_counts(levels[0], group_sizes)
     leaves_per_country = math.prod(levels[1:]) if len(levels) > 1 else 1
     D = C * leaves_per_country
     need = D * MIN_ATOMS_PER_LEAF
@@ -251,7 +254,9 @@ def partition_world(mesh, mask, spec, atom_cost, grow_field, rng):
     unit_sizes = np.array(
         [int(np.isin(mask.group, u).sum()) for u in units], dtype=float
     )
-    C, D = allocate_group_counts(unit_sizes, levels)
+    # D (per-unit leaf counts) is recomputed as cnt[-1] below; we call this for
+    # C and its feasibility check.
+    C, _ = allocate_group_counts(unit_sizes, levels)
 
     level_nodes = [[] for _ in range(n_levels)]
 

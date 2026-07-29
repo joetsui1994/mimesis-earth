@@ -289,12 +289,12 @@ def test_no_sliver_leaf_districts():
         assert min(sizes) >= MIN_ATOMS_PER_LEAF, (spec.seed, min(sizes))
 
 
-def test_leaf_districts_contiguous_over_bridges():
-    # Districts are "contiguous by construction" over the partition graph, which
-    # includes within-group bridges (so a district may span a small sea gap to
-    # absorb an island). Assert each leaf is a single connected component over
-    # mesh edges UNION bridges -- this catches genuine shattering while allowing
-    # legitimate bridge-joined island districts.
+def test_all_units_contiguous_over_bridges():
+    # Every unit at EVERY level (country, province, district) is "contiguous by
+    # construction" over the partition graph, which includes within-group bridges
+    # (so a unit may span a small sea gap to absorb an island). Assert each unit
+    # is a single connected component over mesh edges UNION bridges -- this
+    # catches genuine shattering while allowing legitimate bridge-joined islands.
     from scipy.sparse import coo_matrix
     from scipy.sparse.csgraph import connected_components
     for spec in (
@@ -306,19 +306,20 @@ def test_leaf_districts_contiguous_over_bridges():
         generate(spec, _capture=cap)
         mesh, level_nodes, bridges = cap["mesh"], cap["level_nodes"], cap["bridges"]
         all_edges = np.vstack([mesh.edges, bridges]) if len(bridges) else mesh.edges
-        for node in level_nodes[-1]:            # leaf districts
-            atoms = node["atoms"]
-            pos = {int(a): i for i, a in enumerate(atoms)}
-            rows, cols = [], []
-            for a, b in all_edges:
-                ia, ib = pos.get(int(a)), pos.get(int(b))
-                if ia is not None and ib is not None:
-                    rows.append(ia)
-                    cols.append(ib)
-            adj = coo_matrix((np.ones(len(rows)), (rows, cols)),
-                             shape=(len(atoms), len(atoms)))
-            n_comp, _ = connected_components(adj, directed=False)
-            assert n_comp == 1, (spec.seed, len(atoms), n_comp)
+        for lvl, nodes in enumerate(level_nodes):
+            for node in nodes:
+                atoms = node["atoms"]
+                pos = {int(a): i for i, a in enumerate(atoms)}
+                rows, cols = [], []
+                for a, b in all_edges:
+                    ia, ib = pos.get(int(a)), pos.get(int(b))
+                    if ia is not None and ib is not None:
+                        rows.append(ia)
+                        cols.append(ib)
+                adj = coo_matrix((np.ones(len(rows)), (rows, cols)),
+                                 shape=(len(atoms), len(atoms)))
+                n_comp, _ = connected_components(adj, directed=False)
+                assert n_comp == 1, (spec.seed, lvl, len(atoms), n_comp)
 
 
 def test_exact_totals_and_organic_child_counts():

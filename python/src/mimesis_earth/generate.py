@@ -19,35 +19,31 @@ from mimesis_earth.noise import sphere_noise
 from mimesis_earth.spec import WorldSpec
 from mimesis_earth.world import Unit, World, _rfc7946
 
-# Exponent coefficient for the coherent border-roughness cost field. With the
-# clip below, a larger value sharpens the noise ridges (borders follow them
-# more decisively -> more wiggle) without unbalancing the partition, since the
-# clip caps contrast regardless. 1.5 gives a clearly visible country-level
-# effect (~+17% border tortuosity at max roughness) while keeping province
-# balance strong; the previously-used per-edge noise was near-inert at that
-# scale (long-path averaging + Lloyd re-smoothing washed it out).
+# --- atom_cost: shapes the LEAF (district) border texture --------------
+# Exponent coefficient for the coherent border-roughness term in atom_cost. A
+# larger value sharpens the noise ridges the leaf partition settles borders on
+# (more texture) without unbalancing it, since the clip below caps the contrast.
 BORDER_NOISE_COST = 1.5
 
-# Bound on the |atom_cost| exponent. The cost field shapes borders (they
-# follow its crests) but ALSO governs reachability in the weighted-Voronoi
-# partition, so an unbounded field lets one low-cost basin dominate and
-# starves the rest into slivers (and collapses a mainland into one giant
-# province). Clipping keeps enough contrast to wiggle borders (ratio up to
-# e^2 ~ 7x) while keeping partitions balanced.
+# Bound on the |atom_cost| exponent. atom_cost shapes leaf borders (they follow
+# its crests) but ALSO governs reachability in the weighted-Voronoi leaf
+# partition, so an unbounded field lets one low-cost basin dominate and starve
+# the rest into slivers. Clipping keeps enough contrast to wiggle leaf borders
+# (ratio up to e^2 ~ 7x) while keeping the leaf partition balanced.
 COST_EXPONENT_CLIP = 1.0
 
-# Coherent border field shape. base_freq puts the dominant wavelength near
-# country-border scale (~20deg). High persistence gives the mid-frequency
-# octaves more weight so ridges are DENSE -- without it, a border between two
-# countries separated by a flat patch of the field gets a near-straight
-# bisector, leaving "quite a few straight pairs"; dense ridges make nearly
-# every border cross one and bend (straight-pair fraction ~18% -> ~5%).
+# Frequency/persistence of the coherent noise in atom_cost. High persistence
+# gives the mid-frequency octaves weight so leaf-border ridges are dense (leaf
+# borders bend at fine scale rather than running straight). These shape the
+# district texture; the macro wander of country/province borders comes instead
+# from the region-grower's ridge bias (GROW_FIELD_FREQ below).
 BORDER_NOISE_FREQ = 9.0
 BORDER_NOISE_OCTAVES = 5
 BORDER_NOISE_PERSISTENCE = 0.82
 
-# Base frequency of the macro ridge field that biases region-grow (country /
-# province borders follow its ridges).
+# --- grow_field: biases region-grow so COUNTRY/PROVINCE borders wander ---
+# Base frequency of the low-frequency macro ridge field the region-grower
+# follows when agglomerating districts->provinces->countries.
 GROW_FIELD_FREQ = 4.0
 
 

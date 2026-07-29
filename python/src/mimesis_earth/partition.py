@@ -235,19 +235,3 @@ def allocate_counts(total: int, weights: np.ndarray) -> np.ndarray:
     return counts
 
 
-def redistribute_counts(counts: np.ndarray, capacities: np.ndarray) -> np.ndarray:
-    """Clip per-parent child counts to capacities, handing the excess to
-    parents with the most headroom. Preserves the total exactly."""
-    counts = np.asarray(counts, dtype=int).copy()
-    capacities = np.asarray(capacities, dtype=int)
-    if not counts.sum() <= capacities.sum():
-        raise ValueError("not enough total capacity")
-    excess = int(np.clip(counts - capacities, 0, None).sum())
-    counts = np.minimum(counts, capacities)
-    while excess > 0:
-        headroom = capacities - counts
-        counts[int(headroom.argmax())] += 1
-        excess -= 1
-    return counts
-
-
