@@ -5,7 +5,6 @@ import math
 from collections import defaultdict
 
 import numpy as np
-from scipy.sparse.csgraph import connected_components
 
 from mimesis_earth.partition import allocate_counts, partition_atoms, redistribute_counts
 from mimesis_earth.spec import MIN_ATOMS_PER_LEAF
@@ -123,47 +122,19 @@ def build_item_graph(mesh, parts, bridges=None):
 
 
 def leaf_partition(mesh, group_atoms, n_districts, roughness, size_variance,
-                   atom_cost, rng):
-    """Partition one landmass group's atoms into n_districts single-island
-    districts. Physical islands (mesh components, no bridges) are the units;
-    the smallest are clustered onto their nearest until there are <= n_districts
-    units, each >= MIN_ATOMS_PER_LEAF. Districts are then allocated across units
-    (clamped so none exceeds unit_atoms // MIN_ATOMS_PER_LEAF) and each unit is
-    cut with partition_atoms."""
+                   atom_cost, rng, bridges=None):
+    """Partition one landmass group into n_districts contiguous leaf districts.
+
+    Partitions the WHOLE group at once (not per physical island): passing the
+    group's within-group `bridges` lets partition_atoms make contiguous
+    districts that may span a small sea gap, so small islands are absorbed by a
+    nearby district instead of each claiming a district and starving the
+    mainland's subdivision. The `atom_cost` field (elevation crests + coherent
+    noise) places leaf borders on ridges, which higher levels then inherit.
+    """
     group_atoms = np.asarray(group_atoms)
-    sub = mesh.adjacency[group_atoms][:, group_atoms]
-    ncomp, comp = connected_components(sub, directed=False)
-    units = [group_atoms[comp == c] for c in range(ncomp)]
-    cents = [mesh.points[u].mean(0) for u in units]
-
-    def merge_smallest():
-        i = int(np.argmin([len(u) for u in units]))
-        ci = cents[i]
-        j = min((k for k in range(len(units)) if k != i),
-                key=lambda k: float(np.linalg.norm(cents[k] - ci)))
-        units[j] = np.concatenate([units[j], units[i]])
-        cents[j] = mesh.points[units[j]].mean(0)
-        del units[i]
-        del cents[i]
-
-    while len(units) > 1 and (
-        len(units) > n_districts or min(len(u) for u in units) < MIN_ATOMS_PER_LEAF
-    ):
-        merge_smallest()
-
-    unit_sizes = np.array([len(u) for u in units], dtype=float)
-    caps = np.maximum(1, (unit_sizes // MIN_ATOMS_PER_LEAF).astype(int))
-    alloc = redistribute_counts(allocate_counts(n_districts, unit_sizes), caps)
-    districts = []
-    for u, k in zip(units, alloc.tolist()):
-        if k <= 1:
-            districts.append(u)
-        else:
-            districts.extend(
-                partition_atoms(mesh, u, k, None, roughness, rng,
-                                size_variance=size_variance, atom_cost=atom_cost)
-            )
-    return districts
+    return partition_atoms(mesh, group_atoms, n_districts, bridges, roughness, rng,
+                           size_variance=size_variance, atom_cost=atom_cost)
 
 
 def allocate_group_counts(group_sizes, levels):
@@ -207,7 +178,11 @@ def partition_world(mesh, mask, spec, atom_cost, grow_field, rng):
     levels = spec.levels
     n_levels = len(levels)
     roughness = float(spec.border_roughness)
-    lam = GROW_BIAS * roughness
+    # constant bias strength: grow_field already scales with border_meander and
+    # border_roughness, so multiplying lam by roughness again would zero the
+    # meander contribution whenever roughness=0 (borders must still follow
+    # elevation crests when meander is on and roughness is off).
+    lam = GROW_BIAS
     group_sizes = np.array(
         [(mask.group == g).sum() for g in range(spec.n_landmasses)], dtype=float
     )
@@ -224,7 +199,8 @@ def partition_world(mesh, mask, spec, atom_cost, grow_field, rng):
 
         # --- leaves (finest level) ---
         leaves = leaf_partition(mesh, group_atoms, cnt[-1], roughness,
-                                spec.size_variance, atom_cost, rng)
+                                spec.size_variance, atom_cost, rng,
+                                bridges=mask.bridges)
 
         # --- agglomerate upward: parts[level] = list of atom arrays;
         #     parent_of[level][i] = index into parts[level-1] within this group.

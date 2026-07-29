@@ -81,6 +81,7 @@ def generate(spec: WorldSpec, _capture: dict | None = None) -> World:
         _capture["mesh"] = mesh
         _capture["level_nodes"] = level_nodes
         _capture["elevation"] = mask.elevation
+        _capture["bridges"] = mask.bridges
 
     # --- population on leaves --------------------------------------------
     land_idx = np.flatnonzero(mask.land)
